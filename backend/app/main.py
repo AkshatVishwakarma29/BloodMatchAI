@@ -126,6 +126,75 @@ def submit_donor_response(payload: schemas.ResponseSubmit, db: Session = Depends
     reply = chatbot.process_bot_message(payload.phone, payload.message, db)
     return {"reply": reply}
 
+@app.post("/api/outreach/verify-token")
+def verify_donation_token(payload: schemas.TokenVerify, db: Session = Depends(get_db)):
+    """
+    Called by hospital blood banks or coordinators to verify a donor's BB-XXXXXX token.
+    Enforces double-blind anonymity (masks identities in the response).
+    Marks request as fulfilled, and marks outreach event as donated.
+    Updates the donor's next eligibility date and increments donation counts.
+    """
+    import datetime
+    
+    # Find the outreach event matching the token
+    event = db.query(OutreachEvent).filter(OutreachEvent.verification_token == payload.token).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Invalid or expired verification token")
+        
+    if event.response == "donated":
+        return {
+            "status": "already_verified",
+            "message": "This token was already successfully verified and donation was recorded."
+        }
+
+    # Get the associated request and donor
+    req = db.query(Request).filter(Request.id == event.request_id).first()
+    donor = db.query(User).filter(User.id == event.donor_id).first()
+    
+    if not donor:
+        raise HTTPException(status_code=404, detail="Donor associated with this token not found")
+
+    # Mark the outreach event as donated
+    now_dt = datetime.datetime.now()
+    event.response = "donated"
+    event.response_at = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Mark the request as fulfilled
+    if req:
+        req.status = "fulfilled"
+        req.fulfilled_at = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    # Update donor record
+    donor.last_donation_date = now_dt.strftime("%Y-%m-%d")
+    donor.next_eligible_date = (now_dt + datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+    donor.eligibility_status = "not eligible"
+    if donor.donations_till_date is None:
+        donor.donations_till_date = 1.0
+    else:
+        donor.donations_till_date += 1.0
+
+    db.commit()
+
+    # Log verification to notifications.log
+    outreach.log_notification(
+        f"✅ TOKEN VERIFIED: Token {payload.token} verified successfully at hospital. "
+        f"Donor [Masked: {donor.masked_name}] (Blood group: {donor.blood_group}) donated for Request ID {event.request_id}."
+    )
+
+    return {
+        "status": "success",
+        "message": f"Verification successful! Donation recorded for Donor [Masked: {donor.masked_name}] and Request [Masked].",
+        "verification_details": {
+            "token": payload.token,
+            "donor_masked_name": donor.masked_name,
+            "donor_blood_group": donor.blood_group,
+            "hospital_name": req.hospital_name if req else "Unknown",
+            "verified_at": event.response_at
+        }
+    }
+
+
+
 
 # ----------------- VEERU 2.0 CHATBOT -----------------
 

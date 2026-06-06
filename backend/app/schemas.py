@@ -32,6 +32,8 @@ class UserResponse(UserBase):
     id: str
     health_score: Optional[float] = None
     churn_risk_score: Optional[float] = None
+    masked_name: Optional[str] = None
+    masked_phone: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -75,6 +77,7 @@ class OutreachEventResponse(BaseModel):
     response: str
     response_at: Optional[str] = None
     response_time_mins: Optional[float] = None
+    verification_token: Optional[str] = None
     donor: Optional[UserResponse] = None
 
     class Config:
@@ -107,3 +110,7 @@ class ChatMessageRequest(BaseModel):
 
 class ChatMessageResponse(BaseModel):
     reply: str
+
+class TokenVerify(BaseModel):
+    token: str
+

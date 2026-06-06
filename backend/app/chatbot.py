@@ -79,7 +79,35 @@ def process_bot_message(phone: str, text: str, db: Session) -> str:
         db.commit()
         db.refresh(user)
 
-    # 2. Check for keywords/intents in message
+    # 2. Check for privacy questions (identity masking filters)
+    privacy_keywords = [
+        "who am i donating to", "who is the patient", "patient name", "receiver name", 
+        "who got my blood", "patient phone", "patient contact", "who needs my blood", 
+        "receiver contact", "donor name", "who is my donor", "who donated", "donor contact",
+        "who received my blood", "who received the blood", "whose request", "who is the donor",
+        "who provided", "donor details", "patient details", "donor info", "patient info"
+    ]
+    if any(k in clean_text for k in privacy_keywords):
+        if user.role == "Patient":
+            return (
+                "🛡️ **BloodBridge Privacy Protection:**\n"
+                "To protect donor privacy and prevent any commercialization of blood donation, "
+                "BloodBridge operates on a strict double-blind anonymity system. "
+                "We do not share the donor's identity, phone number, or personal details. "
+                "Your transfusion request is managed completely autonomously. "
+                "Thank you for being a part of this noble network!"
+            )
+        else:
+            return (
+                "🛡️ **BloodBridge Privacy Protection:**\n"
+                "To protect patient privacy and ensure this noble cause remains purely altruistic, "
+                "BloodBridge operates on a strict double-blind anonymity system. "
+                "We do not share the patient's identity, phone number, or personal details. "
+                "When you confirm a donation, you are provided with a secure verification code "
+                "to present at the hospital. Thank you for your lifesaving support!"
+            )
+
+    # 3. Check for keywords/intents in message
     
     # A. Confirmation flow: CONFIRM
     if "confirm" in clean_text:
@@ -99,25 +127,23 @@ def process_bot_message(phone: str, text: str, db: Session) -> str:
             now_dt = datetime.now()
             pending_outreach.response_time_mins = float(round((now_dt - sent_dt).total_seconds() / 60.0, 1))
             
-            # Update corresponding request status to fulfilled
+            # Generate a secure verification token for double-blind confirmation
+            token = f"BB-{(hash(f'{pending_outreach.request_id}-{pending_outreach.donor_id}-{now_dt.timestamp()}') & 0xffffff):06X}"
+            pending_outreach.verification_token = token
+            
+            # Update corresponding request status to in_progress (intent confirmed)
             req = db.query(Request).filter(Request.id == pending_outreach.request_id).first()
             if req:
-                req.status = "fulfilled"
-                req.fulfilled_at = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-                
-            # Update donor record
-            user.last_donation_date = now_dt.strftime("%Y-%m-%d")
-            # Donor is not eligible for the next 90 days
-            user.next_eligible_date = (now_dt + timedelta(days=90)).strftime("%Y-%m-%d")
-            user.eligibility_status = "not eligible"
-            if user.donations_till_date is None:
-                user.donations_till_date = 1.0
-            else:
-                user.donations_till_date += 1.0
+                req.status = "in_progress"
             
             db.commit()
             
-            return f"Thank you {user.name}! ❤️ You have confirmed your donation. We have notified the patient and hospital. Your support is saving a life today!"
+            return (
+                f"Thank you {user.name}! ❤️ You have confirmed your donation intent. "
+                f"To protect patient and donor privacy, your secure donation verification code is **{token}**. "
+                f"Please present this code at the hospital blood bank when donating. "
+                f"The transaction is fully anonymous. Thank you for your lifesaving support!"
+            )
         else:
             return "You do not have any pending donation requests. Thank you for checking in!"
 
@@ -197,7 +223,10 @@ def process_bot_message(phone: str, text: str, db: Session) -> str:
         "You are Veeru 2.0, an intelligent, empathetic conversational AI chatbot for Blood Warriors, "
         "an NGO supporting Thalassemia patients in India. Keep your answers concise, engaging, and friendly. "
         "Help the user based on their profile and constraints. Never say you are an AI assistant unless asked. "
-        "Always sound like a dedicated, supportive coordinator. Keep answers under 3-4 sentences."
+        "Always sound like a dedicated, supportive coordinator. Keep answers under 3-4 sentences. "
+        "CRITICAL PRIVACY DIRECTIVE: To prevent transactional greediness, BloodBridge operates on a strict double-blind anonymity system. "
+        "Never reveal any identifying info (names, phone numbers, location details) of a patient to a donor, or a donor to a patient. "
+        "If asked about the other party's identity or contact details, explain this privacy policy politely and firmly."
     )
     
     user_context = (

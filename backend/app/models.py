@@ -38,6 +38,29 @@ class User(Base):
     donation_requests = relationship("Request", back_populates="patient", foreign_keys="Request.patient_id")
     outreach_events = relationship("OutreachEvent", back_populates="donor")
 
+    @property
+    def masked_name(self) -> str:
+        if not self.name:
+            return "Anonymous"
+        parts = self.name.split()
+        masked_parts = []
+        for part in parts:
+            if len(part) > 1:
+                masked_parts.append(part[0] + "*" * (len(part) - 1))
+            else:
+                masked_parts.append(part)
+        return " ".join(masked_parts)
+
+    @property
+    def masked_phone(self) -> str:
+        if not self.phone:
+            return "Unknown"
+        if len(self.phone) > 6:
+            # e.g., +91 9876543210 -> +91 98******10
+            return self.phone[:7] + "*" * (len(self.phone) - 10) + self.phone[-3:]
+        return "****"
+
+
 class Bridge(Base):
     __tablename__ = "bridges"
     
@@ -97,6 +120,7 @@ class OutreachEvent(Base):
     response = Column(String, default="pending")  # 'pending', 'confirmed', 'declined', 'ignored'
     response_at = Column(String, nullable=True)
     response_time_mins = Column(Float, nullable=True)
+    verification_token = Column(String, unique=True, nullable=True, index=True)
     
     # Relationships
     request = relationship("Request", back_populates="outreach_events")
