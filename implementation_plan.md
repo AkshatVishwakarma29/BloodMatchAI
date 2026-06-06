@@ -405,25 +405,41 @@ Health Score = (
 
 ---
 
-## Pillar 5: Engagement & Retention Engine
+## Pillar 5: Engagement & Retention Engine (Gamification 2.0)
 
-### Solving Donor Attrition
+### Solving Donor Attrition via Social Impact
 
-**Gamification 2.0** (building on existing leaderboard):
-- **BloodBridge Score**: Points for donations, response speed, streaks
-- **Badges**: "Iron Warrior" (10 donations), "Lifeline" (saved 5 patients), State champion
-- **Digital Certificate**: Auto-generated after each donation (SES + PDF Lambda)
-- **Social Sharing**: One-click share to WhatsApp/Instagram
+Instead of individual ego-driven competition, we implement collaborative gamification that aligns with the noble cause of voluntary blood donation:
 
-**Willingness Prediction Model** (SageMaker — Phase 2):
-- Predicts donors at risk of churning (no donation in 90 days)
-- Triggers personalized re-engagement campaigns via Bedrock-generated messages
-- Tests different message styles per donor segment (A/B via EventBridge)
+1. **Collaborative Chapter Quests**:
+   - Focuses on group impact (e.g., "Hyderabad Chapter Quest: Save 500 lives this month").
+   - A regional progress bar tracks active drives and donation logs.
+   - If the collective goal is achieved, all participating donors unlock the shared **"Community Shield"** badge, fostering peer encouragement.
 
-**Awareness & Screening** (new feature):
-- Pre-conception screening reminder campaigns (address root cause)
-- Partner hospital integration for thalassemia carrier testing referrals
-- WhatsApp health literacy chatbot in regional languages
+2. **Virtual "Impact Tokens" (Life-Credits)**:
+   - Donors earn **Life-Credits** for successful donations, prompt responsiveness, and donation streaks.
+   - To prevent commercialization, these credits cannot be exchanged for cash.
+   - **Pay-It-Forward Redemption Center**: Donors redeem credits to sponsor social-good actions:
+     - *Rural Thalassemia Carrier Screening* (200 credits) to test underprivileged families.
+     - *Pediatric Diagnostics Package* (500 credits) to fund treatment packages.
+
+---
+
+## 🛡️ Double-Blind Anonymity & Security Protocol
+
+To eliminate greediness and conflict of interest, the platform enforces absolute anonymity between donors and patients:
+
+1. **Masked Hashed Identities**:
+   - All real names are replaced with anonymized hashes (e.g. `Donor #D-8E1A3` and `Fighter #F-3B9D5`) across the dashboard, logs, and matching views.
+   - Outbound WhatsApp notifications use generic phrases: *"A Thalassemia patient in your region needs your help."*
+
+2. **One-Time Transactional Tokens & QR Codes**:
+   - On match confirmation, a unique tracking token (e.g., `TXN-876F2`) is generated.
+   - The Donor Portal presents this token as a secure **QR Code** to be scanned at the blood bank.
+
+3. **Hospital Verification Portal**:
+   - Hospital staff enter/scan the token in a secure admin verification tab to confirm donation completion.
+   - This verification automatically updates the Chapter Quest and allocates **+100 Life-Credits** to the donor anonymously.
 
 ---
 
@@ -618,7 +634,10 @@ donor_features (donor_id, days_since_last_donation, days_since_last_contact,
 | Cognito auth integration (login + role-based routing) | 2 hrs | Cognito |
 | Deploy frontend to Amplify / S3 + CloudFront | 1 hr | Amplify |
 | Demo scenario prep from Dataset.csv | 2 hrs | RDS |
-| **Total** | **~23 hrs** | |
+| **Phase 3: Double-blind anonymity & masking (hashes, chatbot)** | **2 hrs** | — |
+| **Phase 3: One-Time Transactional Tokens & QR Code flow** | **2 hrs** | — |
+| **Phase 3: Hospital Verification Gateway & Redemptions** | **2 hrs** | RDS |
+| **Total** | **~29 hrs** | |
 
 ### Member B — Backend + AI/ML + Outreach + Chatbot
 
