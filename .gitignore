@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+
+# Databases (uncomment if you don't want to track sqlite database)
+# *.db
+
+# IDEs
+.vscode/
+.idea/
+.gemini/
+.system_generated/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
