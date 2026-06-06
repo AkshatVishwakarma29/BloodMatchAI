@@ -1,0 +1,2332 @@
+import React, { useState, useEffect, useRef } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { Chart, registerables } from 'chart.js';
+import { stats, patients, donors, guests } from './data';
+
+// Register Chart.js components
+Chart.register(...registerables);
+
+// Blood compatibility mapping (patient -> compatible donors)
+const COMPATIBILITY = {
+  'O Positive': ['O Positive', 'O Negative'],
+  'O Negative': ['O Negative'],
+  'A Positive': ['A Positive', 'A Negative', 'O Positive', 'O Negative'],
+  'A Negative': ['A Negative', 'O Negative'],
+  'B Positive': ['B Positive', 'B Negative', 'O Positive', 'O Negative'],
+  'B Negative': ['B Negative', 'O Negative'],
+  'AB Positive': ['O Positive', 'O Negative', 'A Positive', 'A Negative', 'B Positive', 'B Negative', 'AB Positive', 'AB Negative'],
+  'AB Negative': ['O Negative', 'A Negative', 'B Negative', 'AB Negative']
+};
+
+// Haversine formula for distance in km
+function haversine(lat1, lon1, lat2, lon2) {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 999.0;
+  const toRad = (x) => (x * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const rLat1 = toRad(lat1);
+  const rLat2 = toRad(lat2);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.asin(Math.sqrt(a));
+  return c * 6371; // Earth radius in km
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('home');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userRole, setUserRole] = useState(null);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginRole, setLoginRole] = useState('admin');
+  const [loginUsername, setLoginUsername] = useState('coordinator@bloodwarriors.in');
+  const [loginPassword, setLoginPassword] = useState('••••••••');
+  const [selectedPatientId, setSelectedPatientId] = useState(patients[0]?.userId || '');
+  const [matchedDonors, setMatchedDonors] = useState([]);
+  const [outreachLogs, setOutreachLogs] = useState([
+    {
+      id: 1,
+      donorId: 'd_82a7155d',
+      patientId: 'p_84ac7702',
+      patientName: 'Patient #P004',
+      channel: 'WhatsApp',
+      status: 'Confirmed',
+      message: 'Invitation accepted by donor. Blood bridge scheduled.',
+      sentAt: '10 mins ago',
+      response: 'Yes, I will donate'
+    }
+  ]);
+  const [sentInvites, setSentInvites] = useState({});
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState([
+    { sender: 'bot', text: 'Hello! I am Veeru 2.0, your AI Support Assistant for Blood Warriors. Ask me anything about donor eligibility, matching criteria, or rare blood shortages!' }
+  ]);
+  const [chatInput, setChatInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [notification, setNotification] = useState(null);
+
+  // Phase 2 & 3 state variables
+  // Walkathon Registration
+  const [walkName, setWalkName] = useState('');
+  const [walkPhone, setWalkPhone] = useState('');
+  const [walkEmail, setWalkEmail] = useState('');
+  const [walkShirt, setWalkShirt] = useState('M');
+
+  // Sponsorship
+  const [sponsorTier, setSponsorTier] = useState(null);
+  const [sponsorName, setSponsorName] = useState('');
+  const [sponsorEmail, setSponsorEmail] = useState('');
+  const [customSponsorAmount, setCustomSponsorAmount] = useState('');
+  const [showSponsorModal, setShowSponsorModal] = useState(false);
+
+  // Inheritance Calculator
+  const [fatherStatus, setFatherStatus] = useState('normal');
+  const [motherStatus, setMotherStatus] = useState('normal');
+
+  // Leaderboard filter
+  const [leaderboardFilter, setLeaderboardFilter] = useState('All');
+
+  // Phase 3 Gamification & Double-Blind Token hooks
+  const [lifeCredits, setLifeCredits] = useState(900);
+  const [sponsorshipsCount, setSponsorshipsCount] = useState(0);
+  const [hyderabadQuestCount, setHyderabadQuestCount] = useState(420);
+  const [activeDonationToken, setActiveDonationToken] = useState(null);
+  const [verifiedTokens, setVerifiedTokens] = useState({});
+  const [verifyTokenInput, setVerifyTokenInput] = useState('');
+
+  // References for charts
+  const roleChartRef = useRef(null);
+  const roleChartInst = useRef(null);
+  const churnChartRef = useRef(null);
+  const churnChartInst = useRef(null);
+  const bloodChartRef = useRef(null);
+  const bloodChartInst = useRef(null);
+  
+  // Map References
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const mapMarkersGroup = useRef(null);
+
+  // Show auto-dismiss notifications
+  const triggerNotification = (text, type = 'info') => {
+    setNotification({ text, type });
+    setTimeout(() => setNotification(null), 5000);
+  };
+
+  // Perform Donor Matching locally
+  useEffect(() => {
+    if (!selectedPatientId) return;
+    const patient = patients.find(p => p.userId === selectedPatientId);
+    if (!patient) return;
+
+    const neededGroup = patient.bridgeBloodGroup || patient.bloodGroup || 'O Positive';
+    const compatibleGroups = COMPATIBILITY[neededGroup] || [neededGroup];
+
+    // Filter compatible active donors
+    let candidates = donors.filter(d => {
+      const isDonor = d.role.includes('Donor');
+      const isActive = d.activeStatus === 'Active';
+      const isComp = compatibleGroups.includes(d.bloodGroup);
+      return isDonor && isActive && isComp;
+    });
+
+    // Score candidates
+    const scored = candidates.map(d => {
+      let score = 100.0;
+      
+      // 1. Proximity penalty
+      const dist = haversine(d.lat, d.lon, patient.lat, patient.lon);
+      const distPenalty = Math.min(dist * 1.5, 40.0);
+      score -= distPenalty;
+
+      // 2. Calls ratio penalty
+      const callsPenalty = Math.min(d.callsRatio * 5.0, 30.0);
+      score -= callsPenalty;
+
+      // 3. Loyalty reward
+      const loyalty = Math.min(d.donations * 1.5, 15.0);
+      score += loyalty;
+
+      // 4. Eligibility soft filter
+      if (d.eligibility !== 'eligible') {
+        score -= 25.0; // Heavy penalty for ineligible
+      }
+
+      // 5. Gender soft constraint
+      const prefGender = patient.bridgeGender || '';
+      if (prefGender && d.gender && prefGender.toLowerCase() !== 'any') {
+        if (prefGender.toLowerCase() !== d.gender.toLowerCase()) {
+          score -= 15.0;
+        }
+      }
+
+      return {
+        ...d,
+        distance: dist.toFixed(1),
+        score: Math.max(0.0, Math.min(100.0, score)).toFixed(1)
+      };
+    });
+
+    // Sort descending by score
+    scored.sort((a, b) => b.score - a.score);
+    setMatchedDonors(scored.slice(0, 15));
+  }, [selectedPatientId]);
+
+  // Leaflet Map Initialization & Rendering
+  useEffect(() => {
+    if (activeTab === 'dashboard' && mapRef.current) {
+      // Initialize Map
+      if (!mapInstance.current) {
+        mapInstance.current = L.map(mapRef.current, {
+          zoomControl: false,
+          scrollWheelZoom: false
+        }).setView([17.39, 78.46], 11); // Center on Hyderabad cluster
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+          attribution: '© OpenStreetMap'
+        }).addTo(mapInstance.current);
+
+        mapMarkersGroup.current = L.layerGroup().addTo(mapInstance.current);
+        L.control.zoom({ position: 'bottomleft' }).addTo(mapInstance.current);
+      }
+
+      // Re-draw markers
+      if (mapMarkersGroup.current) {
+        mapMarkersGroup.current.clearLayers();
+      }
+
+      // Plot first 40 donors in blue
+      donors.slice(0, 40).forEach(d => {
+        if (mapMarkersGroup.current && d.lat && d.lon) {
+          L.circleMarker([d.lat, d.lon], {
+            radius: 5,
+            fillColor: '#2563eb',
+            color: '#ffffff',
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.7
+          })
+          .bindPopup(`<b>Donor: ${d.donorType}</b><br/>Blood: ${d.bloodGroup}<br/>Eligibility: ${d.eligibility}`)
+          .addTo(mapMarkersGroup.current);
+        }
+      });
+
+      // Plot patients in red
+      patients.forEach(p => {
+        if (mapMarkersGroup.current && p.lat && p.lon) {
+          L.circleMarker([p.lat, p.lon], {
+            radius: 7,
+            fillColor: '#c0002e',
+            color: '#ffffff',
+            weight: 1.5,
+            opacity: 1,
+            fillOpacity: 0.9
+          })
+          .bindPopup(`<b>Patient Bridge Required</b><br/>Needed: ${p.bridgeBloodGroup || p.bloodGroup}<br/>Quantity: ${p.quantity} Unit(s)`)
+          .addTo(mapMarkersGroup.current);
+        }
+      });
+    }
+
+    return () => {
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+        mapMarkersGroup.current = null;
+      }
+    };
+  }, [activeTab]);
+
+  // ChartJS Renderings
+  useEffect(() => {
+    if (activeTab === 'dashboard') {
+      // Role Donut Chart
+      if (roleChartRef.current) {
+        if (roleChartInst.current) roleChartInst.current.destroy();
+        roleChartInst.current = new Chart(roleChartRef.current, {
+          type: 'doughnut',
+          data: {
+            labels: ['Guest', 'Emergency', 'Bridge', 'Patient', 'Volunteer'],
+            datasets: [{
+              data: [stats.roleCounts.Guest, stats.roleCounts["Emergency Donor"], stats.roleCounts["Bridge Donor"], stats.roleCounts.Patient, stats.roleCounts.Volunteer],
+              backgroundColor: ['#94a3b8', '#d97706', '#2563eb', '#c0002e', '#059669'],
+              borderWidth: 0,
+              hoverOffset: 6
+            }]
+          },
+          options: {
+            cutout: '70%',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false }
+            }
+          }
+        });
+      }
+
+      // Churn Analysis Donut
+      if (churnChartRef.current) {
+        if (churnChartInst.current) churnChartInst.current.destroy();
+        churnChartInst.current = new Chart(churnChartRef.current, {
+          type: 'doughnut',
+          data: {
+            labels: ['Not donated 1yr', 'Limited activity', 'Active donors'],
+            datasets: [{
+              data: [361, 321, stats.total - 682],
+              backgroundColor: ['#dc2626', '#d97706', '#e2e8f0'],
+              borderWidth: 0,
+              hoverOffset: 4
+            }]
+          },
+          options: {
+            cutout: '62%',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false }
+            }
+          }
+        });
+      }
+
+      // Blood supply/demand bar chart
+      if (bloodChartRef.current) {
+        if (bloodChartInst.current) bloodChartInst.current.destroy();
+        bloodChartInst.current = new Chart(bloodChartRef.current, {
+          type: 'bar',
+          data: {
+            labels: ['O+', 'B+', 'A+', 'AB+', 'O-', 'B-', 'A-', 'AB-'],
+            datasets: [
+              { label: 'Donors', data: [850, 680, 410, 180, 117, 87, 46, 32], backgroundColor: 'rgba(37,99,235,0.7)', borderRadius: 4 },
+              { label: 'Patients Need', data: [331, 285, 78, 49, 20, 9, 6, 8], backgroundColor: 'rgba(192,0,46,0.7)', borderRadius: 4 }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { labels: { boxWidth: 10, font: { size: 10, family: 'Poppins' } } }
+            },
+            scales: {
+              x: { grid: { display: false } },
+              y: { beginAtZero: true }
+            }
+          }
+        });
+      }
+    }
+  }, [activeTab]);
+
+  // Trigger outreach logs & simulation response
+  const handleOutreachTrigger = (donor, patient) => {
+    const key = `${donor.userId}_${patient.userId}`;
+    if (sentInvites[key]) return;
+
+    setSentInvites(prev => ({ ...prev, [key]: 'sending' }));
+
+    // Helper to generate unique masked IDs for double-blind anonymity
+    const cleanDonorId = donor.userId.replace(/^\\\\x|^\\x/, '').substring(0, 6).toUpperCase();
+    const cleanPatientId = patient.userId.replace(/^\\\\x|^\\x/, '').substring(0, 6).toUpperCase();
+
+    const logId = outreachLogs.length + 1;
+    const newLog = {
+      id: logId,
+      donorId: `Donor #D-${cleanDonorId}`,
+      patientId: `Fighter #F-${cleanPatientId}`,
+      patientName: `Fighter #F-${cleanPatientId}`,
+      channel: 'WhatsApp Secure Proxy',
+      status: 'Sent',
+      message: `WhatsApp template: A Thalassemia patient needs a transfusion of ${donor.bloodGroup} blood at a Hyderabad hospital. Reply YES to confirm.`,
+      sentAt: 'Just now',
+      response: 'Waiting...'
+    };
+
+    setOutreachLogs(prev => [newLog, ...prev]);
+    triggerNotification(`Secure proxy outreach sent to Donor #D-${cleanDonorId}`, 'success');
+
+    // Simulate reply callback after 3 seconds
+    setTimeout(() => {
+      setSentInvites(prev => ({ ...prev, [key]: 'sent' }));
+      const accept = Math.random() > 0.45;
+      const mockToken = `TXN-${Math.floor(10000 + Math.random() * 90000).toString(16).toUpperCase()}`;
+      
+      setOutreachLogs(prevLogs => {
+        return prevLogs.map(l => {
+          if (l.id === logId) {
+            return {
+              ...l,
+              status: accept ? 'Confirmed' : 'Snoozed',
+              response: accept ? 'YES, I will donate.' : 'Snooze request registered.',
+              message: accept 
+                ? `Confirmed. Verification Token ${mockToken} generated. Placed on Secure Proxy Line.` 
+                : 'Snooze registered. Dignity rules applied (30 days contact lock).'
+            };
+          }
+          return l;
+        });
+      });
+
+      if (accept) {
+        setActiveDonationToken(mockToken);
+        setHyderabadQuestCount(prev => prev + 1);
+        triggerNotification(`Match confirmed! Verification Token ${mockToken} generated for Donor #D-${cleanDonorId}.`, 'success');
+      } else {
+        triggerNotification(`Donor snoozed outreach. System locked contact for 30 days.`, 'warning');
+      }
+    }, 3000);
+  };
+
+  // Bot response engine
+  const handleChatSubmit = (e) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+
+    const userText = chatInput.trim();
+    setChatMessages(prev => [...prev, { sender: 'user', text: userText }]);
+    setChatInput('');
+    setIsTyping(true);
+
+    setTimeout(() => {
+      let botText = "I understand you are asking about BloodMatch coordination. To make India Thalassemia-free, BloodMatch 2.0 automatically ranks compatible donors, calculates geographic distances, and manages outreach logs. How can I help you?";
+      const msg = userText.toLowerCase();
+
+      if (
+        msg.includes('who is the receiver') || 
+        msg.includes('who is my donor') || 
+        msg.includes('who is donating') || 
+        msg.includes('who did i donate') || 
+        msg.includes('patient name') || 
+        msg.includes('recipient') || 
+        msg.includes('donor name') || 
+        msg.includes('donor identity') || 
+        msg.includes('receiver name')
+      ) {
+        botText = "To keep this cause noble and protect privacy, we maintain complete anonymity between donors and receivers. Both parties remain anonymous, and all donation coordination is handled securely through the NGO proxy line.";
+      } else if (msg.includes('eligible') || msg.includes('criteria') || msg.includes('who can')) {
+        botText = "To donate blood, you must be 18–65 years old, weigh at least 45 kg, have a hemoglobin level >= 12.5 g/dl, and have not donated in the last 90 days. You must also have no active clinical conditions.";
+      } else if (msg.includes('inactive') || msg.includes('churn')) {
+        botText = `Our database flags ${stats.inactive} inactive donors (9.7% of total). 361 haven't donated in the last year, and 321 have very limited activity despite calls. We re-engage them through Bedrock campaigns.`;
+      } else if (msg.includes('shortage') || msg.includes('rare') || msg.includes('ab negative') || msg.includes('o negative')) {
+        botText = "We have a critical shortage of rare types. There are only 32 AB-Negative donors (4:1 coverage ratio) and 117 O-Negative donors in our Hyderabad cluster. They need careful rotation!";
+      } else if (msg.includes('hello') || msg.includes('hi') || msg.includes('hey')) {
+        botText = "Hello! I am Veeru 2.0, your AI Support Assistant for Blood Warriors. Ask me anything about donor eligibility, matching criteria, or rare blood shortages!";
+      } else if (msg.includes('whatsapp') || msg.includes('twilio') || msg.includes('sandbox')) {
+        botText = "We integrate with Twilio WhatsApp Sandbox for safe testing. During this demo, trigger outreach from the Matching tab and you will see the logs update in real-time.";
+      }
+
+      setChatMessages(prev => [...prev, { sender: 'bot', text: botText }]);
+      setIsTyping(false);
+    }, 1200);
+  };
+
+  return (
+    <div className="app-root">
+      {/* Visual Toast Notification */}
+      {notification && (
+        <div style={{
+          position: 'fixed',
+          top: '5.5rem',
+          right: '2rem',
+          background: notification.type === 'success' ? '#059669' : notification.type === 'warning' ? '#d97706' : '#2563eb',
+          color: 'white',
+          padding: '12px 20px',
+          borderRadius: '8px',
+          boxShadow: 'var(--shadow-md)',
+          zIndex: 99999,
+          fontSize: '12.5px',
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          border: '1px solid rgba(255, 255, 255, 0.2)'
+        }}>
+          <span>{notification.type === 'success' ? '✓' : 'ℹ'}</span>
+          {notification.text}
+        </div>
+      )}
+
+      {/* HEADER NAV */}
+      <nav>
+        <div className="nav-left">
+          <a className="nav-logo" href="#" onClick={(e) => { e.preventDefault(); setActiveTab('home'); }}>
+            <img src="https://db.bloodwarriors.in/storage/v1/object/public/portal-static-assets/logos/BW%20Long%20Logo.png" alt="Blood Warriors Logo" />
+          </a>
+          <div className="nav-divider"></div>
+          <div>
+            <div className="nav-title">BloodMatch 2.0 — AI Portal</div>
+            <div className="nav-subtitle">ThalassemiaFree AI · Hackathon Built</div>
+          </div>
+        </div>
+        <div className="nav-right">
+          <div className="nav-links">
+            <span className={`nav-link ${activeTab === 'home' ? 'active' : ''}`} onClick={() => setActiveTab('home')}>Home</span>
+            <span className={`nav-link ${activeTab === 'about' ? 'active' : ''}`} onClick={() => setActiveTab('about')}>About Us</span>
+            <span className={`nav-link ${activeTab === 'impact' ? 'active' : ''}`} onClick={() => setActiveTab('impact')}>Impact</span>
+            <span className={`nav-link ${activeTab === 'awareness' ? 'active' : ''}`} onClick={() => setActiveTab('awareness')}>Awareness</span>
+            <span className={`nav-link ${activeTab === 'leaderboard' ? 'active' : ''}`} onClick={() => setActiveTab('leaderboard')}>Leaderboard</span>
+            <span className={`nav-link ${activeTab === 'backathon' ? 'active' : ''}`} onClick={() => setActiveTab('backathon')}>Back-A-Thon 2026</span>
+            <span className={`nav-link ${activeTab === 'contribute' ? 'active' : ''}`} onClick={() => setActiveTab('contribute')}>Contribute now</span>
+            
+            {isLoggedIn ? (
+              <>
+                <div className="nav-divider" style={{ margin: '0 0.5rem', height: '20px' }}></div>
+                {userRole === 'admin' && (
+                  <>
+                    <span className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`} style={{ color: 'var(--primary)', fontWeight: 700 }} onClick={() => setActiveTab('dashboard')}>Dashboard</span>
+                    <span className={`nav-link ${activeTab === 'matcher' ? 'active' : ''}`} style={{ color: 'var(--primary)', fontWeight: 700 }} onClick={() => setActiveTab('matcher')}>AI Matching</span>
+                  </>
+                )}
+                {userRole === 'donor' && (
+                  <span className={`nav-link ${activeTab === 'donor' ? 'active' : ''}`} style={{ color: 'var(--primary)', fontWeight: 700 }} onClick={() => setActiveTab('donor')}>Donor Portal</span>
+                )}
+                {userRole === 'patient' && (
+                  <span className={`nav-link ${activeTab === 'patient' ? 'active' : ''}`} style={{ color: 'var(--primary)', fontWeight: 700 }} onClick={() => setActiveTab('patient')}>Patient Portal</span>
+                )}
+                <button 
+                  className="btn-sign-out" 
+                  onClick={() => {
+                    setIsLoggedIn(false);
+                    setUserRole(null);
+                    setActiveTab('home');
+                    triggerNotification("Signed out successfully from Cognito session.", "warning");
+                  }}
+                >
+                  Sign Out
+                </button>
+              </>
+            ) : (
+              <button className="btn-sign-in" onClick={() => {
+                setLoginRole('admin');
+                setLoginUsername('coordinator@bloodwarriors.in');
+                setShowLoginModal(true);
+              }}>Sign In</button>
+            )}
+          </div>
+          <div className="live-pill"><span className="live-dot"></span>React App</div>
+        </div>
+      </nav>
+
+      {/* LANDING PAGE VIEW */}
+      {activeTab === 'home' && (
+        <div className="landing-root">
+          {/* HERO SECTION */}
+          <div className="landing-hero">
+            <span className="hero-tag">MISSION: ZERO THALASSEMIA BY 2035</span>
+            <h1 className="hero-heading">Flip the Thalassemia Narrative</h1>
+            <p className="hero-desc">
+              A child is born with thalassemia major. They did not choose this inherited blood disorder. Without medical support, half never get to enjoy adulthood. Lifelong transfusions are needed every 21–31 days.
+            </p>
+            <div className="hero-ctas">
+              <a className="btn-hero-primary" href="#emergency-requests">See Urgent Requests</a>
+              <button className="btn-hero-secondary" onClick={() => {
+                setLoginRole('donor');
+                setLoginUsername('9391551999');
+                setShowLoginModal(true);
+              }}>Become a Donor</button>
+            </div>
+          </div>
+
+          {/* EMERGENCY SECTION */}
+          <div id="emergency-requests" className="emergency-strip">
+            <h2 style={{ textAlign: 'center', color: 'var(--text)', fontSize: '1.8rem', fontWeight: 800 }}>🚨 EMERGENCY BLOOD REQUESTS</h2>
+            <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '13px', marginTop: '6px' }}>
+              Fighters depend on donors. Listed below are current active transfusion bridges needing support.
+            </p>
+            <div className="emergency-cards">
+              <div className="emergency-item">
+                <div>
+                  <span className="em-label">URGENT</span>
+                  <div className="em-patient">Baby of Rutuja</div>
+                  <div className="em-blood">A Positive</div>
+                  <div className="em-detail">
+                    <strong>Need:</strong> 4 Units<br/>
+                    <strong>Required by:</strong> 6 Jun 2026<br/>
+                    <strong>Location:</strong> Rainbow Children's Hospital, Banjara Hills, Hyderabad
+                  </div>
+                </div>
+                <button className="btn-hero-primary" style={{ width: '100%', padding: '10px', fontSize: '12.5px' }} onClick={() => {
+                  setLoginRole('donor');
+                  setLoginUsername('9391551999');
+                  setShowLoginModal(true);
+                  triggerNotification("Please Sign In as Donor to check compatibility and respond.", "info");
+                }}>I Want to Donate</button>
+              </div>
+
+              <div className="emergency-item">
+                <div>
+                  <span className="em-label">URGENT</span>
+                  <div className="em-patient">Siddharth Reddy</div>
+                  <div className="em-blood">O Negative</div>
+                  <div className="em-detail">
+                    <strong>Need:</strong> 2 Units (Rare Type)<br/>
+                    <strong>Required by:</strong> 7 Jun 2026<br/>
+                    <strong>Location:</strong> Aarohi Blood Center, Madhapur, Hyderabad
+                  </div>
+                </div>
+                <button className="btn-hero-primary" style={{ width: '100%', padding: '10px', fontSize: '12.5px' }} onClick={() => {
+                  setLoginRole('donor');
+                  setLoginUsername('9391551999');
+                  setShowLoginModal(true);
+                  triggerNotification("Please Sign In as Donor to check compatibility and respond.", "info");
+                }}>I Want to Donate</button>
+              </div>
+
+              <div className="emergency-item">
+                <div>
+                  <span className="em-label">NORMAL</span>
+                  <div className="em-patient">K. Navya Sri</div>
+                  <div className="em-blood">B Positive</div>
+                  <div className="em-detail">
+                    <strong>Need:</strong> 2 Units<br/>
+                    <strong>Required by:</strong> 9 Jun 2026<br/>
+                    <strong>Location:</strong> Tapadia Diagnostics, Secunderabad, Hyderabad
+                  </div>
+                </div>
+                <button className="btn-hero-primary" style={{ width: '100%', padding: '10px', fontSize: '12.5px' }} onClick={() => {
+                  setLoginRole('donor');
+                  setLoginUsername('9391551999');
+                  setShowLoginModal(true);
+                  triggerNotification("Please Sign In as Donor to check compatibility and respond.", "info");
+                }}>I Want to Donate</button>
+              </div>
+            </div>
+          </div>
+
+          {/* PREVALENCE SECTION */}
+          <div className="timeline-section" style={{ background: 'var(--bg)' }}>
+            <h2 className="timeline-heading">Genetics, Prevalence, and Realities</h2>
+            <div className="timeline-grid">
+              <div className="timeline-card">
+                <div className="timeline-year">4%</div>
+                <div className="timeline-desc"><strong>Are carriers in India.</strong> Most do not know their status, driving inheritance risks.</div>
+              </div>
+              <div className="timeline-card">
+                <div className="timeline-year">3-5 Lakh</div>
+                <div className="timeline-desc"><strong>Estimated patients.</strong> 1L+ officially recorded. Coordination tools bridge the rest.</div>
+              </div>
+              <div className="timeline-card">
+                <div className="timeline-year">10,000+</div>
+                <div className="timeline-desc"><strong>Newborns each year.</strong> We advocate screening college cohorts for preventive checkups.</div>
+              </div>
+            </div>
+          </div>
+
+          {/* TIMELINE */}
+          <div className="timeline-section">
+            <h2 className="timeline-heading">Our Journey & Roadmap</h2>
+            <div className="timeline-grid">
+              <div className="timeline-card">
+                <div className="timeline-year">2020</div>
+                <div className="timeline-desc">We started as a volunteer circle focused on manually bridging donors and patients in Hyderabad.</div>
+              </div>
+              <div className="timeline-card">
+                <div className="timeline-year">2022</div>
+                <div className="timeline-desc">Launched basic SMS BloodBridge to coordinate donor groups and automate calendar alerts.</div>
+              </div>
+              <div className="timeline-card">
+                <div className="timeline-year">2026</div>
+                <div className="timeline-desc">Building BloodMatch 2.0 dynamically ranking donors, avoiding call fatigue using AWS & AI.</div>
+              </div>
+            </div>
+          </div>
+
+          {/* APPROACH */}
+          <div className="approach-section">
+            <h2 style={{ textAlign: 'center', color: 'var(--text)', fontSize: '2rem', fontWeight: 800 }}>Our Pillars of Support</h2>
+            <div className="approach-grid">
+              <div className="approach-card">
+                <div className="approach-icon">🩸</div>
+                <h3 className="approach-title">Blood Bridge</h3>
+                <p className="approach-desc">Linking fighters to aligned regular donors for timely, scheduled transfusions.</p>
+              </div>
+              <div className="approach-card">
+                <div className="approach-icon">⛺</div>
+                <h3 className="approach-title">Donation Camps</h3>
+                <p className="approach-desc">Community drives that collect safe units and invite healthy individuals into screening.</p>
+              </div>
+              <div className="approach-card">
+                <div className="approach-icon">📱</div>
+                <h3 className="approach-title">Technology</h3>
+                <p className="approach-desc">Portal tools, real-time donor ranking, and chat agents that cut guesswork for families.</p>
+              </div>
+              <div className="approach-card">
+                <div className="approach-icon">🤝</div>
+                <h3 className="approach-title">Relationships</h3>
+                <p className="approach-desc">Dignified, ongoing connections built on counseling and respectful single-channel outreach.</p>
+              </div>
+            </div>
+          </div>
+
+          {/* TESTIMONIALS */}
+          <div className="test-section">
+            <h2 className="timeline-heading">Testimonials</h2>
+            <div className="test-grid">
+              <div className="test-card">
+                <p className="test-quote">"Knowing that 30-minutes of my time every 3-4 months will save a patient and reduce the anxiety of families means everything to me."</p>
+                <div className="test-author">Mahanth</div>
+                <div className="test-role">Volunteer Blood Donor</div>
+              </div>
+              <div className="test-card">
+                <p className="test-quote">"Learning about the struggles of those affected by Thalassemia really helped put things into perspective for me. I am proud to be a bridge."</p>
+                <div className="test-author">Prashanth</div>
+                <div className="test-role">Regular Bridge Donor</div>
+              </div>
+              <div className="test-card">
+                <p className="test-quote">"Volunteering has taught me that the small steps you take everyday will make a significant impact in the future even if it seems to bear no fruit in the present."</p>
+                <div className="test-author">Sai Pallavi</div>
+                <div className="test-role">Brigade Volunteer</div>
+              </div>
+            </div>
+          </div>
+
+          {/* PARTNERS */}
+          <div className="partners-section">
+            <h2 style={{ color: 'var(--text)', fontSize: '1.5rem', fontWeight: 800 }}>Empowered By Our Partners</h2>
+            <div className="partners-grid">
+              <span className="partner-item">Aarohi Blood Center</span>
+              <span className="partner-item">Tapadia Diagnostics</span>
+              <span className="partner-item">NTR Trust</span>
+              <span className="partner-item">JP Morgan Chase & Co</span>
+              <span className="partner-item">MasterCard</span>
+              <span className="partner-item" style={{ color: 'var(--primary)', fontWeight: 800 }}>Blend 360</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ABOUT US VIEW */}
+      {activeTab === 'about' && (
+        <div className="container">
+          <div className="portal-card">
+            <h1 style={{ color: 'var(--primary)', fontWeight: 800 }}>About Blood Warriors Foundation</h1>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginTop: '6px', marginBottom: '2rem' }}>
+              Empowering communities, breaking stigmas, and building an active voluntary network to create a Thalassemia-Free India.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '2.5rem', marginBottom: '3rem' }}>
+              <div>
+                <h3 className="portal-section-title">Our Genesis & Mission</h3>
+                <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: '1.6', marginBottom: '1rem' }}>
+                  Founded in 2020 in Hyderabad, Blood Warriors Foundation started as a small circle of friends answering emergency donation calls for local pediatric wards. We quickly realized that children fighting Thalassemia Major—an inherited blood disorder—require packed red blood cell transfusions every 21 to 30 days to survive.
+                </p>
+                <p style={{ fontSize: '13.5px', color: 'var(--text-secondary)', lineHeight: '1.6', marginBottom: '1rem' }}>
+                  This creates an immense operational, emotional, and financial burden on their families. Our mission is to build structured "Blood Bridges" (assigning 8-10 regular donors who rotate cycles for a single patient) and promote carrier screening among college students and couples to eventually prevent the birth of new Thalassemia Major cases.
+                </p>
+                
+                <h3 className="portal-section-title" style={{ marginTop: '2rem' }}>Our Core Values</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1rem' }}>
+                  <div style={{ background: 'var(--bg)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                    <strong style={{ color: 'var(--primary)', display: 'block', marginBottom: '4px' }}>❤️ Compassion & Care</strong>
+                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Prioritizing the dignity and well-being of Thalassemia fighters and their families above all.</span>
+                  </div>
+                  <div style={{ background: 'var(--bg)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                    <strong style={{ color: 'var(--blue)', display: 'block', marginBottom: '4px' }}>🛡️ Safety First</strong>
+                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Adhering strictly to safe blood banking protocols, screening checks, and donor eligibility intervals.</span>
+                  </div>
+                  <div style={{ background: 'var(--bg)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                    <strong style={{ color: 'var(--green)', display: 'block', marginBottom: '4px' }}>⚡ Transparency</strong>
+                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Ensuring complete openness in operations, donation logging, partner audits, and financial reporting.</span>
+                  </div>
+                  <div style={{ background: 'var(--bg)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                    <strong style={{ color: 'var(--purple)', display: 'block', marginBottom: '4px' }}>💻 AI Innovation</strong>
+                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Deploying custom matching algorithms and communication flows to eliminate human error and coordinate efficiently.</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red-border)', borderRadius: '12px', padding: '1.5rem' }}>
+                  <h4 style={{ color: 'var(--primary)', fontWeight: 800, marginBottom: '10px' }}>Contact Information</h4>
+                  <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '12px', color: 'var(--text-secondary)' }}>
+                    <div>
+                      <strong>📍 Head Office:</strong><br/>
+                      Blood Warriors Foundation, Banjara Hills Rd Number 12, Hyderabad, Telangana 500034
+                    </div>
+                    <div>
+                      <strong>📧 Email Support:</strong><br/>
+                      <a href="mailto:contact@bloodwarriors.in" style={{ color: 'var(--primary)', fontWeight: 600 }}>contact@bloodwarriors.in</a>
+                    </div>
+                    <div>
+                      <strong>📞 Hotline / Coordinator:</strong><br/>
+                      <a href="tel:+919391551999" style={{ color: 'var(--primary)', fontWeight: 600 }}>+91 93915 51999 / +91 62814 77836</a>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '1.5rem', background: 'var(--surface2)', borderRadius: '12px', padding: '1.5rem', border: '1px solid var(--border)' }}>
+                  <h4 style={{ fontWeight: 700, marginBottom: '8px' }}>Register & Support</h4>
+                  <p style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.5', marginBottom: '1rem' }}>
+                    Are you ready to make an impact? Become a registered donor or contribute financial support to cover blood filter kits.
+                  </p>
+                  <button className="btn-hero-primary" style={{ width: '100%', padding: '10px', fontSize: '12px', marginBottom: '8px' }} onClick={() => setActiveTab('contribute')}>Contribute Funds</button>
+                  <button className="btn-hero-secondary" style={{ width: '100%', padding: '10px', fontSize: '12px', background: 'white' }} onClick={() => {
+                    setLoginRole('donor');
+                    setLoginUsername('9391551999');
+                    setShowLoginModal(true);
+                  }}>Register as Donor</button>
+                </div>
+              </div>
+            </div>
+
+            {/* Accordion FAQ */}
+            <h3 className="portal-section-title" style={{ marginTop: '2rem' }}>Frequently Asked Questions</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <details style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px' }}>
+                <summary style={{ fontWeight: 600, fontSize: '13px', cursor: 'pointer', outline: 'none' }}>What is Thalassemia?</summary>
+                <p style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '8px', lineHeight: '1.5' }}>
+                  Thalassemia is an inherited blood disorder characterized by less oxygen-carrying proteins (hemoglobin) and fewer red blood cells in the body than normal. Patients with Thalassemia Major suffer from severe anemia and require regular blood transfusions to sustain life.
+                </p>
+              </details>
+
+              <details style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px' }}>
+                <summary style={{ fontWeight: 600, fontSize: '13px', cursor: 'pointer', outline: 'none' }}>How does a "Blood Bridge" work?</summary>
+                <p style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '8px', lineHeight: '1.5' }}>
+                  To avoid donor fatigue and protect children from transfusion-transmitted infections, we form a group of 8 to 10 committed donors (a bridge) for each child. These donors rotate and donate once every 3-4 months when their turn in the child's calendar arrives.
+                </p>
+              </details>
+
+              <details style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px' }}>
+                <summary style={{ fontWeight: 600, fontSize: '13px', cursor: 'pointer', outline: 'none' }}>Why is carrier screening important?</summary>
+                <p style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '8px', lineHeight: '1.5' }}>
+                  Thalassemia Minor (carrier status) is asymptomatic and most carriers do not know they carry the gene. If two carriers conceive a child, there is a 25% chance the child will have Thalassemia Major. Screening before marriage or pregnancy is the only way to prevent this inherited disease.
+                </p>
+              </details>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IMPACT VIEW */}
+      {activeTab === 'impact' && (
+        <div className="container">
+          <div className="portal-card">
+            <h1 style={{ color: 'var(--primary)', fontWeight: 800 }}>Our Cumulative Impact</h1>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginTop: '6px', marginBottom: '2rem' }}>
+              Tracking blood donations, college screenings, and lives supported in real-time.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
+              <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red-border)', padding: '1.5rem', borderRadius: '12px', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.25rem', fontWeight: 850, color: 'var(--primary)', marginBottom: '4px' }}>15,240+</div>
+                <div style={{ fontSize: '13px', fontWeight: 700 }}>Blood Units Coordinated</div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>Transfusion units successfully delivered to pediatric thalassemia fighters.</div>
+              </div>
+              <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', padding: '1.5rem', borderRadius: '12px', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.25rem', fontWeight: 850, color: 'var(--green)', marginBottom: '4px' }}>4,850+</div>
+                <div style={{ fontSize: '13px', fontWeight: 700 }}>Carrier Screenings</div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>Free HbA2 blood test screenings performed in college drives and community camps.</div>
+              </div>
+              <div style={{ background: 'var(--blue-bg)', border: '1px solid var(--blue-border)', padding: '1.5rem', borderRadius: '12px', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.25rem', fontWeight: 850, color: 'var(--blue)', marginBottom: '4px' }}>120+</div>
+                <div style={{ fontSize: '13px', fontWeight: 700 }}>Active Child Bridges</div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>Children registered with a dedicated group of rotating active blood donors.</div>
+              </div>
+              <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', padding: '1.5rem', borderRadius: '12px', textAlign: 'center' }}>
+                <div style={{ fontSize: '2.25rem', fontWeight: 850, color: 'var(--purple)', marginBottom: '4px' }}>3,200+</div>
+                <div style={{ fontSize: '13px', fontWeight: 700 }}>Registered Donors</div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>Active emergency and bridge volunteers stored securely in our database.</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '2rem', marginBottom: '2rem' }}>
+              <div>
+                <h3 className="portal-section-title">Recent Awareness & Screening Camps (2026)</h3>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Institution / Camp Location</th>
+                        <th>Screenings</th>
+                        <th>Carriers Identified</th>
+                        <th>Blood Units Collected</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><b>12 May 2026</b></td>
+                        <td>Osmania University Campus, Hyderabad</td>
+                        <td>420</td>
+                        <td>18 (4.2%)</td>
+                        <td>84 Units</td>
+                      </tr>
+                      <tr>
+                        <td><b>28 Apr 2026</b></td>
+                        <td>JNTU College of Engineering, Kukatpally</td>
+                        <td>380</td>
+                        <td>15 (3.9%)</td>
+                        <td>65 Units</td>
+                      </tr>
+                      <tr>
+                        <td><b>15 Mar 2026</b></td>
+                        <td>Gachibowli Community Health Camp</td>
+                        <td>250</td>
+                        <td>9 (3.6%)</td>
+                        <td>42 Units</td>
+                      </tr>
+                      <tr>
+                        <td><b>12 Feb 2026</b></td>
+                        <td>Vignan Institute of Tech, Deshmukhi</td>
+                        <td>510</td>
+                        <td>22 (4.3%)</td>
+                        <td>110 Units</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="portal-section-title">Verified Official Audit Documents</h3>
+                <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '1rem', lineHeight: '1.4' }}>
+                  For compliance, transparency, and public review, we provide access to our yearly auditor disclosures.
+                </p>
+
+                <div className="cert-card" style={{ background: 'var(--surface2)', borderColor: 'var(--border)', marginTop: '0' }}>
+                  <div className="cert-icon">📂</div>
+                  <div style={{ flex: 1 }}>
+                    <div className="cert-title" style={{ color: 'var(--text)' }}>Annual Report 2023-24</div>
+                    <div className="cert-desc" style={{ color: 'var(--muted)' }}>Summary of activities, bridges, and prevention milestones.</div>
+                    <button className="btn-cert-download" style={{ background: 'var(--primary)' }} onClick={() => triggerNotification('Downloading Annual Report 2023-24 PDF (Audit verified)...', 'success')}>Download PDF</button>
+                  </div>
+                </div>
+
+                <div className="cert-card" style={{ background: 'var(--surface2)', borderColor: 'var(--border)', marginTop: '12px' }}>
+                  <div className="cert-icon">📊</div>
+                  <div style={{ flex: 1 }}>
+                    <div className="cert-title" style={{ color: 'var(--text)' }}>Financial Statements 2022-23</div>
+                    <div className="cert-desc" style={{ color: 'var(--muted)' }}>Income disclosures, 80G tax reports, and filter expenses.</div>
+                    <button className="btn-cert-download" style={{ background: 'var(--primary)' }} onClick={() => triggerNotification('Downloading Financial Statements 2022-23 PDF...', 'success')}>Download PDF</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AWARENESS VIEW */}
+      {activeTab === 'awareness' && (
+        <div className="container">
+          <div className="portal-card">
+            <h1 style={{ color: 'var(--primary)', fontWeight: 800 }}>Thalassemia Education & Genetics</h1>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginTop: '6px', marginBottom: '2rem' }}>
+              Understanding the difference between Thalassemia Minor (carrier) and Thalassemia Major, and screening to build a Thalassemia-free future.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginBottom: '3rem' }}>
+              <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: '12px', padding: '1.5rem' }}>
+                <h3 style={{ color: 'var(--green)', fontWeight: 700, marginBottom: '8px', fontSize: '15px' }}>🟢 Thalassemia Minor (Carrier)</h3>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '10px' }}>
+                  A person who inherits the Thalassemia gene from only one parent has <strong>Thalassemia Minor</strong>. 
+                </p>
+                <ul style={{ fontSize: '12px', color: 'var(--muted)', paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <li>Usually asymptomatic and has normal life expectancy.</li>
+                  <li>May show mild anemia (often misdiagnosed as iron deficiency).</li>
+                  <li>Does NOT require regular blood transfusions or special medical care.</li>
+                  <li><strong>Important:</strong> Can pass the thalassemia gene to their children.</li>
+                </ul>
+              </div>
+
+              <div style={{ background: 'white', border: '1px solid var(--red-border)', borderRadius: '12px', padding: '1.5rem' }}>
+                <h3 style={{ color: 'var(--primary)', fontWeight: 700, marginBottom: '8px', fontSize: '15px' }}>🔴 Thalassemia Major (Patient)</h3>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '10px' }}>
+                  A person who inherits the gene from both parents develops <strong>Thalassemia Major</strong>.
+                </p>
+                <ul style={{ fontSize: '12px', color: 'var(--muted)', paddingLeft: '1.25rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <li>Severe, life-threatening anemia starting in infancy.</li>
+                  <li>Requires lifelong blood transfusions every 21 to 30 days.</li>
+                  <li>Requires daily iron chelation therapy to remove excess iron accumulation.</li>
+                  <li>Can be prevented through carrier screening of couples prior to pregnancy.</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Inheritance Calculator */}
+            <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '16px', padding: '2rem' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text)', textAlign: 'center', marginBottom: '8px' }}>🧬 Thalassemia Inheritance Calculator</h2>
+              <p style={{ fontSize: '13px', color: 'var(--muted)', textAlign: 'center', maxWidth: '600px', margin: '0 auto 2rem', lineHeight: '1.5' }}>
+                Select the carrier status of both parents to calculate the mathematical genetic probability outcomes for their biological children.
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', maxWidth: '700px', margin: '0 auto 2rem' }}>
+                <div>
+                  <label className="auth-input-label" style={{ display: 'block', marginBottom: '6px' }}>Father's Carrier Status</label>
+                  <select 
+                    className="match-selector" 
+                    value={fatherStatus}
+                    onChange={(e) => setFatherStatus(e.target.value)}
+                  >
+                    <option value="normal">Normal (Non-carrier)</option>
+                    <option value="carrier">Carrier (Thalassemia Minor)</option>
+                    <option value="patient">Patient (Thalassemia Major)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="auth-input-label" style={{ display: 'block', marginBottom: '6px' }}>Mother's Carrier Status</label>
+                  <select 
+                    className="match-selector" 
+                    value={motherStatus}
+                    onChange={(e) => setMotherStatus(e.target.value)}
+                  >
+                    <option value="normal">Normal (Non-carrier)</option>
+                    <option value="carrier">Carrier (Thalassemia Minor)</option>
+                    <option value="patient">Patient (Thalassemia Major)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Calculator Output Calculation */}
+              {(() => {
+                let normal = 0, carrier = 0, major = 0;
+                let outcomeText = "";
+                let alertColor = "var(--green)";
+                let alertBg = "var(--green-bg)";
+                let alertBorder = "var(--green-border)";
+
+                if (fatherStatus === 'normal' && motherStatus === 'normal') {
+                  normal = 100;
+                  outcomeText = "Normal Status: All children will inherit normal hemoglobin genes. 0% chance of Thalassemia carrier/major status.";
+                } else if (
+                  (fatherStatus === 'normal' && motherStatus === 'carrier') ||
+                  (fatherStatus === 'carrier' && motherStatus === 'normal')
+                ) {
+                  normal = 50;
+                  carrier = 50;
+                  outcomeText = "Carrier Status: There is a 50% chance the child will be a Thalassemia Minor carrier (healthy, asymptomatic) and a 50% chance of being completely Normal. 0% chance of Thalassemia Major.";
+                  alertColor = "var(--blue)";
+                  alertBg = "var(--blue-bg)";
+                  alertBorder = "var(--blue-border)";
+                } else if (fatherStatus === 'carrier' && motherStatus === 'carrier') {
+                  normal = 25;
+                  carrier = 50;
+                  major = 25;
+                  outcomeText = "HIGH RISK: Since both parents are Thalassemia Minor carriers, there is a 25% chance of Thalassemia Major (lifelong transfusions needed), a 50% chance of Thalassemia Minor carrier, and a 25% chance of being Normal. Pre-natal diagnostics or genetic counseling is highly recommended.";
+                  alertColor = "var(--primary)";
+                  alertBg = "var(--red-bg)";
+                  alertBorder = "var(--red-border)";
+                } else if (
+                  (fatherStatus === 'patient' && motherStatus === 'normal') ||
+                  (fatherStatus === 'normal' && motherStatus === 'patient')
+                ) {
+                  carrier = 100;
+                  outcomeText = "Carrier Status: All children will inherit one Thalassemia gene and be Thalassemia Minor carriers (healthy, asymptomatic). 0% chance of Thalassemia Major.";
+                  alertColor = "var(--blue)";
+                  alertBg = "var(--blue-bg)";
+                  alertBorder = "var(--blue-border)";
+                } else if (
+                  (fatherStatus === 'patient' && motherStatus === 'carrier') ||
+                  (fatherStatus === 'carrier' && motherStatus === 'patient')
+                ) {
+                  carrier = 50;
+                  major = 50;
+                  outcomeText = "VERY HIGH RISK: There is a 50% chance the child will have Thalassemia Major (severe anemia) and a 50% chance of Thalassemia Minor carrier. Immediate pre-pregnancy medical guidance is critical.";
+                  alertColor = "var(--primary)";
+                  alertBg = "var(--red-bg)";
+                  alertBorder = "var(--red-border)";
+                } else if (fatherStatus === 'patient' && motherStatus === 'patient') {
+                  major = 100;
+                  outcomeText = "CRITICAL RISK: Both parents are Thalassemia Major patients. 100% chance of children inheriting Thalassemia Major. Consult specialized medical experts.";
+                  alertColor = "var(--primary)";
+                  alertBg = "var(--red-bg)";
+                  alertBorder = "var(--red-border)";
+                }
+
+                return (
+                  <div style={{ maxWidth: '700px', margin: '0 auto' }}>
+                    <div style={{
+                      background: alertBg,
+                      border: `1px solid ${alertBorder}`,
+                      color: alertColor,
+                      padding: '16px 20px',
+                      borderRadius: '12px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      lineHeight: '1.5',
+                      marginBottom: '2rem',
+                      textAlign: 'center'
+                    }}>
+                      {outcomeText}
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>
+                          <span>Normal Child (Non-Carrier)</span>
+                          <span style={{ color: 'var(--green)' }}>{normal}%</span>
+                        </div>
+                        <div className="prog-track" style={{ height: '12px' }}><div className="prog-fill" style={{ width: `${normal}%`, background: 'var(--green)', transition: 'width 0.3s ease' }}></div></div>
+                      </div>
+
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>
+                          <span>Carrier Child (Thalassemia Minor)</span>
+                          <span style={{ color: 'var(--blue)' }}>{carrier}%</span>
+                        </div>
+                        <div className="prog-track" style={{ height: '12px' }}><div className="prog-fill" style={{ width: `${carrier}%`, background: 'var(--blue)', transition: 'width 0.3s ease' }}></div></div>
+                      </div>
+
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>
+                          <span>Patient Child (Thalassemia Major)</span>
+                          <span style={{ color: 'var(--primary)' }}>{major}%</span>
+                        </div>
+                        <div className="prog-track" style={{ height: '12px' }}><div className="prog-fill" style={{ width: `${major}%`, background: 'var(--primary)', transition: 'width 0.3s ease' }}></div></div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LEADERBOARD VIEW */}
+      {activeTab === 'leaderboard' && (
+        <div className="container">
+          <div className="portal-card">
+            <h1 style={{ color: 'var(--primary)', fontWeight: 800 }}>Our Voluntary Blood Donor Heroes</h1>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginTop: '6px', marginBottom: '2rem' }}>
+              Recognizing top active voluntary donors who keep the Thalassemia transfusion bridges alive in Hyderabad.
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div className="match-label">Active Leaderboard Rankings</div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {['All', 'O Negative', 'B Positive', 'A Positive', 'O Positive'].map(grp => (
+                  <button 
+                    key={grp}
+                    style={{
+                      border: '1px solid var(--border)',
+                      background: leaderboardFilter === grp ? 'var(--primary-light)' : 'white',
+                      color: leaderboardFilter === grp ? 'var(--primary)' : 'var(--text-secondary)',
+                      fontSize: '11.5px',
+                      fontWeight: 700,
+                      padding: '4px 12px',
+                      borderRadius: '6px',
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => setLeaderboardFilter(grp)}
+                  >
+                    {grp}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: '80px', textAlign: 'center' }}>Rank</th>
+                    <th>Donor Name (Privacy Masked)</th>
+                    <th>Blood Group</th>
+                    <th>General Location</th>
+                    <th>Lifetime Donations</th>
+                    <th>Bridge Status</th>
+                    <th>Badge / Title</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { rank: 1, name: "Mahanth K.", blood: "B Positive", location: "Madhapur, Hyd", count: 24, badge: "🎖 Grand Lifesaver", status: "Active" },
+                    { rank: 2, name: "Prashanth R.", blood: "A Positive", location: "Secunderabad, Hyd", count: 19, badge: "🎗 Bridge Champion", status: "Active" },
+                    { rank: 3, name: "Sai Pallavi P.", blood: "O Positive", location: "Banjara Hills, Hyd", count: 15, badge: "⭐ Volunteer Star", status: "Active" },
+                    { rank: 4, name: "Apurva S.", blood: "O Negative", location: "Gachibowli, Hyd", count: 12, badge: "🩸 Rare Type Hero", status: "Active" },
+                    { rank: 5, name: "Venkatesh B.", blood: "O Positive", location: "Kondapur, Hyd", count: 10, badge: "🎗 Bridge Champion", status: "Active" },
+                    { rank: 6, name: "Rithika M.", blood: "B Positive", location: "Begumpet, Hyd", count: 8, badge: "⭐ Volunteer Star", status: "Active" },
+                    { rank: 7, name: "Kiran Kumar A.", blood: "AB Negative", location: "Madhapur, Hyd", count: 7, badge: "🩸 Rare Type Hero", status: "Active" },
+                    { rank: 8, name: "Nitya N.", blood: "A Negative", location: "Jubilee Hills, Hyd", count: 6, badge: "⭐ Volunteer Star", status: "Active" }
+                  ]
+                  .filter(d => leaderboardFilter === 'All' || d.blood === leaderboardFilter)
+                  .map((d, idx) => (
+                    <tr key={idx} style={{ background: d.rank <= 3 ? 'var(--bg)' : 'white' }}>
+                      <td style={{ textAlign: 'center', fontWeight: 800, color: d.rank === 1 ? '#eab308' : d.rank === 2 ? '#94a3b8' : d.rank === 3 ? '#b45309' : 'var(--muted)' }}>
+                        #{d.rank}
+                      </td>
+                      <td><b>{d.name}</b></td>
+                      <td><span className="bg-pill" style={{ display: 'inline-block' }}>{d.blood}</span></td>
+                      <td>{d.location}</td>
+                      <td><b>{d.count} Donations</b></td>
+                      <td><span style={{ color: 'var(--green)', fontWeight: 700 }}>● {d.status}</span></td>
+                      <td><span style={{ fontWeight: 650, color: 'var(--text-secondary)' }}>{d.badge}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="opp-box" style={{ marginTop: '1.5rem' }}>
+              <div className="opp-title">🎁 Donor Recognition Campaign</div>
+              <div className="opp-text">
+                Every voluntary donor who completes 5+ donations is awarded a certificate, printed badge, and entered into our quarterly volunteer honors ledger. Thank you for your support!
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BACK-A-THON VIEW */}
+      {activeTab === 'backathon' && (
+        <div className="container">
+          <div className="portal-card">
+            <h1 style={{ color: 'var(--primary)', fontWeight: 800 }}>Back-A-Thon 2026 - Walk for Thalassemia</h1>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginTop: '6px', marginBottom: '2rem' }}>
+              Join our annual public awareness walkathon, pledge support, and make India Thalassemia-free.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '2.5rem' }}>
+              <div>
+                <h3 className="portal-section-title">Event Logistics</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div style={{ background: 'var(--bg)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                    <strong>📅 Date</strong>
+                    <div style={{ fontSize: '13px', marginTop: '4px', fontWeight: 600 }}>15 November 2026</div>
+                  </div>
+                  <div style={{ background: 'var(--bg)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                    <strong>⏰ Time</strong>
+                    <div style={{ fontSize: '13px', marginTop: '4px', fontWeight: 600 }}>6:00 AM — 9:30 AM</div>
+                  </div>
+                  <div style={{ background: 'var(--bg)', padding: '1rem', borderRadius: '10px', border: '1px solid var(--border)', gridColumn: 'span 2' }}>
+                    <strong>📍 Starting Point</strong>
+                    <div style={{ fontSize: '13px', marginTop: '4px', fontWeight: 600 }}>Necklace Road, PV Ghat, Hyderabad, Telangana</div>
+                  </div>
+                </div>
+
+                <h3 className="portal-section-title">Rules & Guidelines</h3>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '8px' }}>
+                  1. Participants are requested to report by 5:45 AM for T-shirt distribution.
+                </p>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '8px' }}>
+                  2. Free breakfast and hydration support stations are located at every 1.5 km of the 5 km route.
+                </p>
+                <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: '1.5', marginBottom: '8px' }}>
+                  3. All registrants will receive a verified awareness kit, certificates, and wristbands.
+                </p>
+              </div>
+
+              <div>
+                <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '14px', padding: '1.75rem' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: 700, marginBottom: '1rem', color: 'var(--text)' }}>🎟️ Free Walkathon Registration</h3>
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!walkName.trim() || !walkPhone.trim()) {
+                      triggerNotification("Please fill in Name and Phone Number.", "warning");
+                      return;
+                    }
+                    triggerNotification(`Successfully registered ${walkName} for Back-A-Thon 2026. Code: BW2026-WK${Math.floor(1000 + Math.random() * 9000)}`, "success");
+                    setWalkName('');
+                    setWalkPhone('');
+                    setWalkEmail('');
+                  }}>
+                    <div className="auth-input-group">
+                      <label className="auth-input-label">FullName</label>
+                      <input 
+                        type="text" 
+                        className="auth-input" 
+                        value={walkName}
+                        onChange={(e) => setWalkName(e.target.value)}
+                        placeholder="Enter your name" 
+                        required 
+                      />
+                    </div>
+                    <div className="auth-input-group">
+                      <label className="auth-input-label">Mobile Number</label>
+                      <input 
+                        type="tel" 
+                        className="auth-input" 
+                        value={walkPhone}
+                        onChange={(e) => setWalkPhone(e.target.value)}
+                        placeholder="Enter phone number" 
+                        required 
+                      />
+                    </div>
+                    <div className="auth-input-group">
+                      <label className="auth-input-label">Email Address (Optional)</label>
+                      <input 
+                        type="email" 
+                        className="auth-input" 
+                        value={walkEmail}
+                        onChange={(e) => setWalkEmail(e.target.value)}
+                        placeholder="Enter email address" 
+                      />
+                    </div>
+                    <div className="auth-input-group">
+                      <label className="auth-input-label">T-Shirt Size</label>
+                      <select 
+                        className="match-selector" 
+                        value={walkShirt}
+                        onChange={(e) => setWalkShirt(e.target.value)}
+                      >
+                        <option value="S">Small (S)</option>
+                        <option value="M">Medium (M)</option>
+                        <option value="L">Large (L)</option>
+                        <option value="XL">Extra Large (XL)</option>
+                      </select>
+                    </div>
+
+                    <button type="submit" className="btn-login" style={{ marginTop: '1rem' }}>Register Free Ticket</button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONTRIBUTE VIEW */}
+      {activeTab === 'contribute' && (
+        <div className="container">
+          <div className="portal-card">
+            <h1 style={{ color: 'var(--primary)', fontWeight: 800 }}>Support Thalassemia Children</h1>
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginTop: '6px', marginBottom: '2rem' }}>
+              Your financial contributions directly fund leucodepletion blood filters, iron chelation therapies, and pre-marital carrier testing drives.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
+              <div style={{ border: '1px solid var(--border)', padding: '1.75rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: 'white' }}>
+                <div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)', marginBottom: '8px' }}>₹1,000 / month</div>
+                  <strong style={{ display: 'block', fontSize: '13.5px', marginBottom: '8px' }}>Leucodepletion Blood Filters</strong>
+                  <p style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.5' }}>
+                    Sponsors one filter set. Filters remove white blood cells from donated units, preventing recurrent transfusion reactions and antibody formations in children.
+                  </p>
+                </div>
+                <button className="btn-hero-primary" style={{ width: '100%', marginTop: '1.5rem', padding: '10px' }} onClick={() => {
+                  setSponsorTier({ name: "Blood Filters Sponsorship", amt: "₹1,000" });
+                  setShowSponsorModal(true);
+                }}>Sponsor Now</button>
+              </div>
+
+              <div style={{ border: '1px solid var(--primary)', padding: '1.75rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: 'white', position: 'relative' }}>
+                <span className="em-label" style={{ position: 'absolute', top: '10px', right: '10px', background: 'var(--primary)' }}>POPULAR</span>
+                <div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)', marginBottom: '8px' }}>₹3,000 / month</div>
+                  <strong style={{ display: 'block', fontSize: '13.5px', marginBottom: '8px' }}>Daily Iron Chelation Meds</strong>
+                  <p style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.5' }}>
+                    Sponsors chelation therapy. Repeated blood transfusions cause dangerous iron overload in the liver and heart. Chelation drugs help clear this toxic build-up.
+                  </p>
+                </div>
+                <button className="btn-hero-primary" style={{ width: '100%', marginTop: '1.5rem', padding: '10px' }} onClick={() => {
+                  setSponsorTier({ name: "Iron Chelation Sponsorship", amt: "₹3,000" });
+                  setShowSponsorModal(true);
+                }}>Sponsor Now</button>
+              </div>
+
+              <div style={{ border: '1px solid var(--border)', padding: '1.75rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: 'white' }}>
+                <div>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)', marginBottom: '8px' }}>₹5,000 / month</div>
+                  <strong style={{ display: 'block', fontSize: '13.5px', marginBottom: '8px' }}>Complete Medical Support</strong>
+                  <p style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.5' }}>
+                    Sponsors full medical care. Includes blood filters, chelation medicine, monthly blood counts, liver function profiles, and specialist pediatrician consulting.
+                  </p>
+                </div>
+                <button className="btn-hero-primary" style={{ width: '100%', marginTop: '1.5rem', padding: '10px' }} onClick={() => {
+                  setSponsorTier({ name: "Complete Medical Support", amt: "₹5,000" });
+                  setShowSponsorModal(true);
+                }}>Sponsor Now</button>
+              </div>
+            </div>
+
+            {/* Custom contribution card */}
+            <div style={{ background: 'var(--surface2)', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)', maxWidth: '600px', margin: '0 auto' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 700, marginBottom: '6px', textAlign: 'center' }}>Custom Support Contribution</h3>
+              <p style={{ fontSize: '12px', color: 'var(--muted)', textAlign: 'center', marginBottom: '1rem' }}>Enter a custom amount to support screening and camp expenses.</p>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <input 
+                  type="number" 
+                  className="auth-input" 
+                  placeholder="Enter amount (₹)" 
+                  value={customSponsorAmount}
+                  onChange={(e) => setCustomSponsorAmount(e.target.value)}
+                />
+                <button className="btn-hero-primary" style={{ padding: '8px 24px', fontSize: '12px', whiteSpace: 'nowrap' }} onClick={() => {
+                  if (!customSponsorAmount || parseFloat(customSponsorAmount) <= 0) {
+                    triggerNotification("Please enter a valid amount.", "warning");
+                    return;
+                  }
+                  setSponsorTier({ name: "Custom Contribution", amt: `₹${customSponsorAmount}` });
+                  setShowSponsorModal(true);
+                }}>Contribute</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SPONSORSHIP CHECKOUT MODAL */}
+      {showSponsorModal && sponsorTier && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ width: '400px' }}>
+            <button className="modal-close" onClick={() => setShowSponsorModal(false)}>×</button>
+            <div className="auth-title">Complete Your Sponsorship</div>
+            <div className="auth-sub">Thank you for supporting our mission</div>
+            
+            <div style={{
+              background: 'var(--bg)',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              fontSize: '13px',
+              fontWeight: 600,
+              display: 'flex',
+              justifyContent: 'space-between',
+              marginBottom: '1.5rem'
+            }}>
+              <span>Selected support:</span>
+              <span style={{ color: 'var(--primary)' }}>{sponsorTier.name} ({sponsorTier.amt})</span>
+            </div>
+
+            <div className="auth-input-group">
+              <label className="auth-input-label">Sponsor / Donor Name</label>
+              <input 
+                type="text" 
+                className="auth-input" 
+                value={sponsorName}
+                onChange={(e) => setSponsorName(e.target.value)}
+                placeholder="Enter your name" 
+                required
+              />
+            </div>
+            
+            <div className="auth-input-group">
+              <label className="auth-input-label">Email Address</label>
+              <input 
+                type="email" 
+                className="auth-input" 
+                value={sponsorEmail}
+                onChange={(e) => setSponsorEmail(e.target.value)}
+                placeholder="Enter email address" 
+                required
+              />
+            </div>
+
+            <button 
+              className="btn-login"
+              onClick={() => {
+                if (!sponsorName.trim() || !sponsorEmail.trim()) {
+                  triggerNotification("Please enter both Name and Email.", "warning");
+                  return;
+                }
+                setShowSponsorModal(false);
+                triggerNotification(`Heartfelt thanks! Simulating successful 80G gateway approval for ${sponsorTier.amt}. Receipt sent.`, 'success');
+                setSponsorName('');
+                setSponsorEmail('');
+                setCustomSponsorAmount('');
+              }}
+            >
+              Simulate Secure Payment
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN DASHBOARD VIEW */}
+      {activeTab === 'dashboard' && (
+        <>
+          <div className="page-header">
+            <div className="page-header-left">
+              <h1>Operational Intelligence Dashboard</h1>
+              <p>Real-time analytics powered by Blood Warriors dataset · {stats.total.toLocaleString()} records · Hyderabad cluster</p>
+            </div>
+            <div className="header-stats">
+              <div className="hstat">
+                <div className="hstat-val">{stats.total.toLocaleString()}</div>
+                <div className="hstat-lbl">Total Records</div>
+              </div>
+              <div className="hstat">
+                <div className="hstat-val" style={{ color: 'var(--green)' }}>{stats.eligible.toLocaleString()}</div>
+                <div className="hstat-lbl">Eligible Donors</div>
+              </div>
+              <div className="hstat">
+                <div className="hstat-val" style={{ color: 'var(--amber)' }}>{stats.activeBridges}</div>
+                <div className="hstat-lbl">Active Bridges</div>
+              </div>
+              <div className="hstat">
+                <div className="hstat-val" style={{ color: 'var(--primary)' }}>{stats.inactive}</div>
+                <div className="hstat-lbl">Inactive Donors</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="alert">
+            <span style={{ fontSize: '18px' }}>🚨</span>
+            <div className="alert-text">
+              <strong>Critical Shortage Alert:</strong> Only <strong>32 AB-Negative</strong> and <strong>117 O-Negative</strong> donors are registered for 28 patients needing these rare types. Calls-to-donation worst case is <strong>23 calls → 0 donations</strong>. AI scheduling avoids donor burnout.
+            </div>
+            <div className="alert-badge">⚠ Action Required</div>
+          </div>
+
+          {/* SECURE TOKEN VERIFICATION GATEWAY */}
+          <div style={{
+            margin: '1.25rem 2rem 0',
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: '12px',
+            padding: '1.25rem 1.5rem',
+            boxShadow: 'var(--shadow-sm)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '1rem'
+          }}>
+            <div>
+              <h4 style={{ color: 'var(--text)', fontWeight: 700, fontSize: '13.5px' }}>🏥 Double-Blind Hospital Donation Verification</h4>
+              <p style={{ color: 'var(--muted)', fontSize: '11.5px', marginTop: '3px' }}>
+                Enter the transactional token presented by the donor at the blood bank to verify their donation cycle anonymously.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <input 
+                type="text" 
+                className="auth-input" 
+                placeholder="Enter Token (e.g. TXN-876F2)" 
+                style={{ width: '220px', textTransform: 'uppercase', height: '38px', margin: 0 }}
+                value={verifyTokenInput}
+                onChange={(e) => setVerifyTokenInput(e.target.value)}
+              />
+              <button 
+                className="btn-hero-primary" 
+                style={{ padding: '0 20px', fontSize: '12.5px', whiteSpace: 'nowrap', height: '38px', cursor: 'pointer' }}
+                onClick={() => {
+                  if (!verifyTokenInput.trim()) {
+                    triggerNotification("Please enter a verification token.", "warning");
+                    return;
+                  }
+                  const token = verifyTokenInput.trim().toUpperCase();
+                  if (activeDonationToken === token) {
+                    setVerifiedTokens(prev => ({ ...prev, [token]: true }));
+                    setLifeCredits(prev => prev + 100);
+                    triggerNotification(`Success! Donation token ${token} verified. Recipient request completed anonymously.`, 'success');
+                    setVerifyTokenInput('');
+                  } else {
+                    triggerNotification(`Error: Donation token ${token} not found or already verified.`, 'warning');
+                  }
+                }}
+              >
+                Verify Donation
+              </button>
+            </div>
+          </div>
+
+          <div className="container">
+            {/* KPI Summary */}
+            <div className="section-label">Key Performance Indicators — Baseline vs AI Target</div>
+            <div className="kpi-grid">
+              <div className="kpi-card c-red">
+                <div className="kpi-top">
+                  <div className="kpi-icon-wrap">📞</div>
+                  <span className="kpi-badge badge-red">▲ Worst: 23.0</span>
+                </div>
+                <div className="kpi-val">1.85</div>
+                <div className="kpi-label">Calls-to-Donation Ratio</div>
+                <div className="kpi-meta">Avg. calls per successful donation</div>
+                <div className="kpi-target">🎯 AI Target: &lt; 0.8 · Smarter ranking, not more calls</div>
+              </div>
+              <div className="kpi-card c-amber">
+                <div className="kpi-top">
+                  <div className="kpi-icon-wrap">😴</div>
+                  <span className="kpi-badge badge-red">9.7% of total</span>
+                </div>
+                <div className="kpi-val">{stats.inactive}</div>
+                <div className="kpi-label">Inactive Donors</div>
+                <div className="kpi-meta">361 not donated 1yr · 321 no response</div>
+                <div className="kpi-target">🎯 AI Target: &lt; 3% · Churn prediction model</div>
+              </div>
+              <div className="kpi-card c-green">
+                <div className="kpi-top">
+                  <div className="kpi-icon-wrap">✅</div>
+                  <span className="kpi-badge badge-green">Ready now</span>
+                </div>
+                <div className="kpi-val">{stats.eligible.toLocaleString()}</div>
+                <div className="kpi-label">Eligible Active Donors</div>
+                <div className="kpi-meta">1,718 Bridge · 1,587 Emergency</div>
+                <div className="kpi-target">🎯 Target: 12+ donors per patient bridge</div>
+              </div>
+              <div className="kpi-card c-blue">
+                <div className="kpi-top">
+                  <div className="kpi-icon-wrap">🔗</div>
+                  <span className="kpi-badge badge-red">Only 11.2%</span>
+                </div>
+                <div className="kpi-val">{stats.activeBridges}</div>
+                <div className="kpi-label">Patient Bridges</div>
+                <div className="kpi-meta">786 bridge-donor links · 9.8 donors/bridge</div>
+                <div className="kpi-target">🎯 Target: 1,00,000+ patients via BloodMatch 2.0</div>
+              </div>
+              <div className="kpi-card c-purple">
+                <div className="kpi-top">
+                  <div className="kpi-icon-wrap">👤</div>
+                  <span className="kpi-badge badge-amber">34.4%</span>
+                </div>
+                <div className="kpi-val">{stats.guests.toLocaleString()}</div>
+                <div className="kpi-label">Unconverted Guests</div>
+                <div className="kpi-meta">No blood group · incomplete profile</div>
+                <div className="kpi-target">🎯 Target: &gt; 25% conversion via AI nurturing</div>
+              </div>
+            </div>
+
+            {/* Maps & Stats */}
+            <div className="section-label">Geographic & Population Intelligence</div>
+            <div className="row-2">
+              <div className="card">
+                <div className="card-title">🩸 Hyderabad Donor & Patient Distribution Map</div>
+                <div className="card-sub">Red markers represent Thalassemia Patients. Blue circles display local volunteer donor clusters.</div>
+                <div className="map-container-wrap" ref={mapRef}></div>
+              </div>
+
+              <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div className="card-title">Donor Population Breakdown</div>
+                <div className="card-sub">Role distribution across all 7,033 records</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '130px 1fr', gap: '1.25rem', alignItems: 'center', flex: 1 }}>
+                  <div style={{ height: '140px', position: 'relative' }}>
+                    <canvas ref={roleChartRef}></canvas>
+                  </div>
+                  <div>
+                    <div className="prog-row">
+                      <div className="prog-label">Guest</div>
+                      <div className="prog-track"><div className="prog-fill" style={{ width: '34.4%', background: '#94a3b8' }}></div></div>
+                      <div className="prog-count">2,420</div>
+                    </div>
+                    <div className="prog-row">
+                      <div className="prog-label">Emergency</div>
+                      <div className="prog-track"><div className="prog-fill" style={{ width: '33.9%', background: '#d97706' }}></div></div>
+                      <div className="prog-count">2,385</div>
+                    </div>
+                    <div className="prog-row">
+                      <div className="prog-label">Bridge</div>
+                      <div className="prog-track"><div className="prog-fill" style={{ width: '29.3%', background: '#2563eb' }}></div></div>
+                      <div className="prog-count">2,061</div>
+                    </div>
+                    <div className="prog-row">
+                      <div className="prog-label">Patient</div>
+                      <div className="prog-track"><div className="prog-fill" style={{ width: '1.2%', background: '#c0002e' }}></div></div>
+                      <div className="prog-count">84</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="opp-box">
+                  <div className="opp-title">💡 AI Opportunity</div>
+                  <div className="opp-text">2,385 Emergency donors donated once and were never re-engaged. Converting just 10% adds 238 bridge donors immediately.</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Supply/Demand & Churn re-engagement */}
+            <div className="section-label">Inventory & Churn Risks</div>
+            <div className="row-2">
+              <div className="card">
+                <div className="card-title">🩸 Blood Type: Supply vs Demand</div>
+                <div className="card-sub">Total active donor registry counts vs patients needing bridge transfusion</div>
+                <div style={{ height: '200px' }}>
+                  <canvas ref={bloodChartRef}></canvas>
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="card-title">⚠️ Churn Risk — Re-engagement Queue</div>
+                <div className="card-sub">Active donors flagged for inactivity. Bedrock drafts automated re-engagement triggers.</div>
+                <div className="churn-list-container">
+                  <div className="churn-item">
+                    <div className="churn-avatar">O+</div>
+                    <div className="churn-info">
+                      <div className="churn-name">Bridge Donor — O Positive</div>
+                      <div className="churn-reason">Inactivity: Multiple calls, zero donations</div>
+                      <button className="btn-reengage" onClick={() => triggerNotification('Bedrock generated re-engagement message: "Hi! We noticed you haven\'t donated recently. A child with Thalassemia needs O+ blood soon. Reply YES to check availability."', 'success')}>Re-engage</button>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="churn-ratio">23:1</div>
+                      <div className="churn-lbl">call ratio</div>
+                    </div>
+                  </div>
+                  <div className="churn-item">
+                    <div className="churn-avatar" style={{ background: 'var(--amber-bg)', color: 'var(--amber)' }}>B+</div>
+                    <div className="churn-info">
+                      <div className="churn-name">Bridge Donor — B Positive</div>
+                      <div className="churn-reason">Inactivity: No donation in 12 months</div>
+                      <button className="btn-reengage" onClick={() => triggerNotification('Bedrock generated re-engagement message: "Greetings! You are eligible again to save lives. Would you like to schedule your next donation cycle? Reply YES."', 'success')}>Re-engage</button>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="churn-ratio">12:1</div>
+                      <div className="churn-lbl">call ratio</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Summary */}
+            <div className="section-label">System Performance</div>
+            <div className="footer-stats">
+              <div className="fstat">
+                <div className="fstat-val">1,718</div>
+                <div className="fstat-lbl">Bridge Donors — Eligible & Active</div>
+              </div>
+              <div className="fstat">
+                <div className="fstat-val">1,587</div>
+                <div className="fstat-lbl">Emergency Donors — Ready to Engage</div>
+              </div>
+              <div className="fstat" style={{ color: 'var(--green)' }}>
+                <div className="fstat-val">1.5 → 4+</div>
+                <div className="fstat-lbl">Avg Donations (Current → Target)</div>
+              </div>
+              <div className="fstat" style={{ color: 'var(--amber)' }}>
+                <div className="fstat-val">24.6 days</div>
+                <div className="fstat-lbl">Avg Contact Frequency</div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* AI MATCHING VIEW */}
+      {activeTab === 'matcher' && (
+        <div className="container">
+          <div className="portal-card">
+            <h1>🤖 AI Donor Ranking & Outreach Simulator</h1>
+            <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px', marginBottom: '1.5rem' }}>
+              Select a patient record to calculate real compatible donor rankings from Dataset.csv based on distance, calls ratio, and gender preference.
+            </p>
+
+            <div className="portal-grid">
+              {/* Left Column: Matcher Control & List */}
+              <div>
+                <div className="match-selector-wrap">
+                  <label className="match-label" style={{ display: 'block', marginBottom: '6px' }}>Select Patient Transfusion Request</label>
+                  <select 
+                    className="match-selector" 
+                    value={selectedPatientId} 
+                    onChange={(e) => setSelectedPatientId(e.target.value)}
+                  >
+                    {patients.map(p => (
+                      <option key={p.userId} value={p.userId}>
+                        Patient {p.userId.substring(0, 8)} ({p.bridgeBloodGroup || p.bloodGroup}) - Needs {p.quantity} Unit(s)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Patient Detail Summary */}
+                {patients.find(p => p.userId === selectedPatientId) && (
+                  <div className="match-request">
+                    <div className="match-req-badge">🚨 Active Request Details</div>
+                    <div className="match-req-title">
+                      Patient #{selectedPatientId.substring(0, 8).toUpperCase()} — Needs {patients.find(p => p.userId === selectedPatientId).bridgeBloodGroup || patients.find(p => p.userId === selectedPatientId).bloodGroup}
+                    </div>
+                    <div className="match-req-sub">
+                      Quantity: {patients.find(p => p.userId === selectedPatientId).quantity} Unit(s) | Hospital: {patients.find(p => p.userId === selectedPatientId).hospital}<br/>
+                      Preferred Gender Match: <b>{patients.find(p => p.userId === selectedPatientId).bridgeGender || 'Any'}</b> | Location: Hyderabad ({patients.find(p => p.userId === selectedPatientId).lat}, {patients.find(p => p.userId === selectedPatientId).lon})
+                    </div>
+                  </div>
+                )}
+
+                <div className="match-label">AI-Ranked Compatible Donors</div>
+                <div className="match-list-container">
+                  {matchedDonors.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)', fontSize: '13px' }}>
+                      No compatible active donors found in this area.
+                    </div>
+                  ) : (
+                    matchedDonors.map((d, index) => {
+                      const key = `${d.userId}_${selectedPatientId}`;
+                      const inviteStatus = sentInvites[key];
+                      
+                      return (
+                        <div key={d.userId} className={`match-donor rank-${index < 3 ? index + 1 : '3'}`}>
+                          <div className="rank-num">#{index + 1}</div>
+                          <div className="bg-pill">{d.bloodGroup}</div>
+                          <div className="donor-info">
+                            <div className="donor-name">{d.donorType} (ID: {d.userId.substring(0,8)})</div>
+                            <div className="donor-sub">
+                              {d.donations} donations | Call Ratio: {d.callsRatio} | <b>{d.distance} km</b> away<br/>
+                              Gender: {d.gender} | Eligibility: <b>{d.eligibility}</b>
+                            </div>
+                            {inviteStatus === 'sending' ? (
+                              <button className="btn-outreach sent" disabled>Sending WhatsApp SMS...</button>
+                            ) : inviteStatus === 'sent' ? (
+                              <button className="btn-outreach sent" disabled>✓ Outreach Complete</button>
+                            ) : (
+                              <button 
+                                className="btn-outreach" 
+                                onClick={() => handleOutreachTrigger(d, patients.find(p => p.userId === selectedPatientId))}
+                              >
+                                Send WhatsApp Invite
+                              </button>
+                            )}
+                          </div>
+                          <div className="score-wrap">
+                            <div className="score-num">{d.score}</div>
+                            <div className="score-bar"><div className="score-fill" style={{ width: `${d.score}%`, background: index === 0 ? 'var(--green)' : index === 1 ? 'var(--blue)' : 'var(--purple)' }}></div></div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Outreach Log Simulator */}
+              <div>
+                <div className="portal-section-title">Outreach Log & Reply Simulator</div>
+                <p style={{ fontSize: '11.5px', color: 'var(--muted)', marginBottom: '1rem', lineHeight: '1.4' }}>
+                  Every outreach event communicates only via preferred channels to avoid donor fatigue. Under sandbox rules, the coordinator triggers the message and receives callbacks from test donor nodes in 3 seconds.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '480px', overflowY: 'auto', paddingRight: '4px' }}>
+                  {outreachLogs.map(log => (
+                    <div key={log.id} style={{
+                      background: 'var(--surface2)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '10px',
+                      padding: '12px 14px',
+                      fontSize: '12px',
+                      boxShadow: 'var(--shadow-sm)'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <span style={{ fontWeight: 700, color: 'var(--text-secondary)' }}>Log ID #{log.id}</span>
+                        <span style={{
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          background: log.status === 'Confirmed' ? 'var(--green-bg)' : log.status === 'Snoozed' ? 'var(--amber-bg)' : 'var(--blue-bg)',
+                          color: log.status === 'Confirmed' ? 'var(--green)' : log.status === 'Snoozed' ? 'var(--amber)' : 'var(--blue)'
+                        }}>{log.status}</span>
+                      </div>
+                      <div style={{ color: 'var(--text)', marginBottom: '4px' }}>
+                        To Donor ID: <b>{log.donorId}</b> for {log.patientName} ({log.channel})
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--muted)', fontStyle: 'italic', marginBottom: '6px' }}>
+                        "{log.message}"
+                      </div>
+                      <div style={{
+                        background: 'white',
+                        border: '1px solid var(--border-light)',
+                        borderRadius: '6px',
+                        padding: '6px 10px',
+                        fontSize: '11px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}>
+                        <span style={{ color: 'var(--muted)' }}>Response:</span>
+                        <span style={{ fontWeight: 650, color: log.status === 'Confirmed' ? 'var(--green)' : 'var(--text-secondary)' }}>{log.response}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DONOR PORTAL VIEW */}
+      {activeTab === 'donor' && (
+        <div className="container">
+          <div className="portal-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
+              <div>
+                <h1 style={{ color: 'var(--primary)', fontWeight: 800 }}>💪 Donor Lifeline & Impact Dashboard</h1>
+                <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px' }}>
+                  Welcome back, Lifeline Volunteer. Track your achievements, spend Life-Credits on pay-it-forward redemptions, and present secure verification tokens.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '1.25rem', background: 'var(--surface2)', padding: '12px 20px', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '10px', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Available Life-Credits</div>
+                  <div style={{ fontSize: '1.35rem', fontWeight: 850, color: 'var(--primary)' }}>{lifeCredits} Credits</div>
+                </div>
+                <div style={{ width: '1px', background: 'var(--border)' }}></div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '10px', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Sponsorships Funded</div>
+                  <div style={{ fontSize: '1.35rem', fontWeight: 850, color: 'var(--green)' }}>{sponsorshipsCount} Packages</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Gamification Panel: XP Levels and Quests */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1.5rem', marginBottom: '2rem' }}>
+              <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '14px', padding: '1.5rem' }}>
+                <h3 className="portal-section-title" style={{ borderLeftColor: 'var(--blue)' }}>Chapter Collaborative Quest</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '12.5px', color: 'var(--text-secondary)' }}>
+                    🎯 <b>Hyderabad Chapter Quest:</b> Save 500 Lives this month!
+                  </span>
+                  <span style={{ fontSize: '12.5px', fontWeight: 750, color: 'var(--blue)' }}>
+                    {hyderabadQuestCount} / 500 Saved
+                  </span>
+                </div>
+                <div className="prog-track" style={{ height: '14px', marginBottom: '12px' }}>
+                  <div 
+                    className="prog-fill" 
+                    style={{ 
+                      width: `${Math.min(100, (hyderabadQuestCount / 500) * 100)}%`, 
+                      background: 'var(--blue)', 
+                      transition: 'width 0.5s ease-out' 
+                    }}
+                  ></div>
+                </div>
+                <p style={{ fontSize: '11px', color: 'var(--muted)', lineHeight: '1.4' }}>
+                  <b>Quest Status:</b> Collaborative goal. If the monthly chapter quest target of 500 lives saved is met, all participating donors receive the shared <b>"Community Shield"</b> badge. This shifts focus from individual ego-driven ranks to collaborative community impact.
+                </p>
+              </div>
+
+              <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '14px', padding: '1.5rem', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--muted)' }}>LEVEL PROGRESSION</span>
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--primary)' }}>Level 3 Lifesaver</span>
+                </div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '6px' }}>750 XP</div>
+                <div className="prog-track" style={{ height: '10px', marginBottom: '6px' }}>
+                  <div className="prog-fill" style={{ width: '75%', background: 'var(--primary)' }}></div>
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--muted)', textAlign: 'right' }}>250 XP until Level 4</div>
+              </div>
+            </div>
+
+            {/* Profile Grid */}
+            <div className="portal-grid" style={{ marginBottom: '2rem' }}>
+              {/* Profile Details */}
+              <div>
+                <div className="portal-section-title">My Donor Profile (Masked & Protected)</div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Blood Group</span>
+                  <span className="profile-field-val" style={{ color: 'var(--primary)' }}>B Positive</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Donor Anonymity Code</span>
+                  <span className="profile-field-val">Donor #D-82A71</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Total Donations</span>
+                  <span className="profile-field-val">9 Lifetime Donations</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Last Donation Date</span>
+                  <span className="profile-field-val">2025-08-17</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Eligibility Status</span>
+                  <span className="profile-field-val" style={{ color: 'var(--green)' }}>Eligible to Donate Now</span>
+                </div>
+
+                <div style={{ marginTop: '1.5rem', display: 'flex', gap: '10px' }}>
+                  <button className="btn-outreach" style={{ padding: '8px 16px', fontSize: '12px' }} onClick={() => triggerNotification('Status updated: You are now marked as AVAILABLE for active bridges in Hyderabad.', 'success')}>Update Availability</button>
+                  <button className="btn-reengage" style={{ padding: '8px 16px', fontSize: '12px', border: '1px solid var(--border)' }} onClick={() => triggerNotification('Snooze scheduled. You will not receive donation requests for the next 30 days.', 'warning')}>Snooze Requests (30d)</button>
+                </div>
+              </div>
+
+              {/* Secure Token & QR Card */}
+              <div>
+                <div className="portal-section-title">🏥 Secure Token & QR Verification</div>
+                <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '1rem', lineHeight: '1.4' }}>
+                  To maintain double-blind anonymity and prevent direct recipient-donor transactional pressure, present this secure transactional token at the hospital blood bank. 
+                </p>
+
+                {activeDonationToken ? (
+                  <div style={{
+                    background: 'white',
+                    border: '1px solid var(--primary-mid)',
+                    borderRadius: '12px',
+                    padding: '1.25rem',
+                    textAlign: 'center',
+                    boxShadow: 'var(--shadow-sm)'
+                  }}>
+                    <div style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', marginBottom: '4px' }}>Active Transactional Token</div>
+                    <div style={{ fontSize: '1.75rem', fontWeight: 900, color: 'var(--primary)', letterSpacing: '2px', marginBottom: '12px' }}>{activeDonationToken}</div>
+                    
+                    {/* Visual QR Code Simulator */}
+                    <div style={{
+                      width: '120px',
+                      height: '120px',
+                      margin: '0 auto 12px',
+                      background: 'var(--surface2)',
+                      border: '6px solid white',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      padding: '4px',
+                      boxShadow: 'inset 0 0 10px rgba(0,0,0,0.1)'
+                    }}>
+                      {[...Array(64)].map((_, i) => (
+                        <div 
+                          key={i} 
+                          style={{
+                            width: '12.5%', 
+                            height: '12.5%', 
+                            background: (i * 7 + 13) % 5 === 0 || (i < 8 && i % 3 === 0) || (i > 56 && i % 2 === 0) ? '#0f172a' : 'transparent'
+                          }}
+                        ></div>
+                      ))}
+                    </div>
+                    
+                    <p style={{ fontSize: '10.5px', color: 'var(--muted)', lineHeight: '1.4' }}>
+                      Ask hospital staff to verify this code `<b>{activeDonationToken}</b>` in their Coordinator portal to confirm your donation anonymously.
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{
+                    background: 'var(--surface2)',
+                    border: '1px dotted var(--border)',
+                    borderRadius: '12px',
+                    padding: '2rem 1.5rem',
+                    textAlign: 'center',
+                    color: 'var(--muted)'
+                  }}>
+                    <span style={{ fontSize: '2rem', display: 'block', marginBottom: '8px' }}>🎟️</span>
+                    <strong style={{ fontSize: '13px', display: 'block', color: 'var(--text-secondary)' }}>No Active Token</strong>
+                    <span style={{ fontSize: '11.5px', display: 'block', marginTop: '4px', lineHeight: '1.4' }}>
+                      Once the coordinator assigns you to an urgent request and outreach is confirmed, your secure QR token will generate here.
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Virtual Impact Tokens (Pay-It-Forward Redemptions) */}
+            <div style={{ background: '#f8fafc', border: '1px solid var(--border)', borderRadius: '16px', padding: '1.75rem', marginBottom: '2rem' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '4px' }}>🎁 Pay-It-Forward Redemption Center</h3>
+              <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '1.25rem', lineHeight: '1.4' }}>
+                Life-Credits cannot be exchanged for money to prevent commercialization of blood donation. Instead, spend your credits to fund life-saving medical care and screenings for underprivileged families:
+              </p>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <strong style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Rural Family Carrier Screening</strong>
+                      <span className="bg-pill" style={{ background: 'var(--green-bg)', color: 'var(--green)', fontSize: '10px' }}>200 Credits</span>
+                    </div>
+                    <p style={{ fontSize: '11.5px', color: 'var(--muted)', lineHeight: '1.4' }}>
+                      Sponsor a free Thalassemia carrier screening (HbA2 test) for an underprivileged rural family to prevent genetic inheritance risks.
+                    </p>
+                  </div>
+                  <button 
+                    className="btn-cert-download" 
+                    style={{ background: 'var(--green)', width: '100%', marginTop: '1rem', padding: '8px', fontSize: '11.5px' }}
+                    onClick={() => {
+                      if (lifeCredits < 200) {
+                        triggerNotification("Insufficient Life-Credits. Complete active bridges to earn more!", "warning");
+                        return;
+                      }
+                      setLifeCredits(prev => prev - 200);
+                      setSponsorshipsCount(prev => prev + 1);
+                      triggerNotification("Redemption Success! Sponsoring 1 Rural Thalassemia Carrier screening drive.", "success");
+                    }}
+                  >
+                    Redeem Screening (200c)
+                  </button>
+                </div>
+
+                <div style={{ background: 'white', border: '1px solid var(--border)', borderRadius: '12px', padding: '1.25rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <strong style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Pediatric Diagnostics Package</strong>
+                      <span className="bg-pill" style={{ background: 'var(--green-bg)', color: 'var(--green)', fontSize: '10px' }}>500 Credits</span>
+                    </div>
+                    <p style={{ fontSize: '11.5px', color: 'var(--muted)', lineHeight: '1.4' }}>
+                      Fund a diagnostics blood package (including full blood count, serum ferritin, and liver panels) for a pediatric patient.
+                    </p>
+                  </div>
+                  <button 
+                    className="btn-cert-download" 
+                    style={{ background: 'var(--green)', width: '100%', marginTop: '1rem', padding: '8px', fontSize: '11.5px' }}
+                    onClick={() => {
+                      if (lifeCredits < 500) {
+                        triggerNotification("Insufficient Life-Credits. Complete active bridges to earn more!", "warning");
+                        return;
+                      }
+                      setLifeCredits(prev => prev - 500);
+                      setSponsorshipsCount(prev => prev + 1);
+                      triggerNotification("Redemption Success! Funding 1 pediatric diagnostics support package.", "success");
+                    }}
+                  >
+                    Redeem Care Package (500c)
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Achievements and Badges */}
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
+              <div className="portal-section-title">My Earned Milestone Badges</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
+                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '28px' }}>🔓</span>
+                  <div>
+                    <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>First Drop Badge</strong>
+                    <span style={{ fontSize: '11px', color: '#047857' }}>Completed first voluntary donation in Hyderabad.</span>
+                  </div>
+                </div>
+
+                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '28px' }}>🔓</span>
+                  <div>
+                    <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>Bridge Anchor</strong>
+                    <span style={{ fontSize: '11px', color: '#047857' }}>Supported a single thalassemia child for 3 cycles.</span>
+                  </div>
+                </div>
+
+                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '28px' }}>🔓</span>
+                  <div>
+                    <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>Rare Guardian</strong>
+                    <span style={{ fontSize: '11px', color: '#047857' }}>Completed donor rotates for critical shortages.</span>
+                  </div>
+                </div>
+
+                {hyderabadQuestCount >= 421 ? (
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '28px' }}>🛡️</span>
+                    <div>
+                      <strong style={{ fontSize: '12.5px', color: '#1e40af', display: 'block' }}>Community Shield</strong>
+                      <span style={{ fontSize: '11px', color: '#1d4ed8' }}>Collaborated in Chapter's monthly quest targets!</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px', opacity: 0.65 }}>
+                    <span style={{ fontSize: '28px', filter: 'grayscale(1)' }}>🔒</span>
+                    <div>
+                      <strong style={{ fontSize: '12.5px', color: 'var(--muted)', display: 'block' }}>Community Shield</strong>
+                      <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Locked: Complete the monthly Hyderabad Chapter Quest.</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PATIENT PORTAL VIEW */}
+      {activeTab === 'patient' && (
+        <div className="container">
+          <div className="portal-card">
+            <h1>🩸 Patient Transfusion Calendar & Network</h1>
+            <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px', marginBottom: '2rem' }}>
+              Manage upcoming blood transfusion dates and view assigned anonymous Bridge Donors. Contact is mediated through the secure NGO proxy line.
+            </p>
+
+            <div className="portal-grid">
+              {/* Next transfusion */}
+              <div>
+                <div className="portal-section-title">My Transfusion Calendar</div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Required Blood Group</span>
+                  <span className="profile-field-val" style={{ color: 'var(--primary)', fontSize: '14px' }}>B Positive</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Transfusion Frequency</span>
+                  <span className="profile-field-val">Every 21 Days</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Last Transfusion Date</span>
+                  <span className="profile-field-val">2026-05-18</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Expected Next Date</span>
+                  <span className="profile-field-val" style={{ color: 'var(--primary)' }}>2026-06-08 (In 2 days)</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Quantity Required</span>
+                  <span className="profile-field-val">2 Units (Red Blood Cells)</span>
+                </div>
+                <div className="profile-field">
+                  <span className="profile-field-lbl">Assigned Hospital</span>
+                  <span className="profile-field-val">Hyderabad General Hospital</span>
+                </div>
+
+                <div style={{ marginTop: '1.5rem' }}>
+                  <button className="btn-outreach" style={{ background: 'var(--red)', padding: '10px 20px', fontSize: '12px' }} onClick={() => triggerNotification('Emergency alert generated. NGO Coordinator and proxy backup bridges notified immediately.', 'success')}>🚨 Request Emergency Backup</button>
+                </div>
+              </div>
+
+              {/* Assigned Bridge Donors */}
+              <div>
+                <div className="portal-section-title">Assigned Bridge Donors (Double-Blind Protected)</div>
+                <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '10px', lineHeight: '1.4' }}>
+                  To prevent direct transactional requests or conflicts of interest, all donor identities are anonymized and communications are routed securely.
+                </p>
+
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Donor Pseudonym</th>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Preferred Contact</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td><b>Donor #D-82A71</b></td>
+                        <td>Regular Bridge</td>
+                        <td><span style={{ color: 'var(--green)', fontWeight: 600 }}>Active / Eligible</span></td>
+                        <td>NGO Proxy Hotline</td>
+                      </tr>
+                      <tr>
+                        <td><b>Donor #D-41F6A</b></td>
+                        <td>Regular Bridge</td>
+                        <td><span style={{ color: 'var(--green)', fontWeight: 600 }}>Active / Eligible</span></td>
+                        <td>NGO Proxy Hotline</td>
+                      </tr>
+                      <tr>
+                        <td><b>Donor #D-366F1</b></td>
+                        <td>Emergency Backup</td>
+                        <td><span style={{ color: 'var(--amber)', fontWeight: 600 }}>Ineligible (Cycle Lock)</span></td>
+                        <td>NGO Proxy Hotline</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FOOTER */}
+      <footer>
+        <div className="footer-inner">
+          <div className="footer-copy">© Blood Warriors 2026 · BloodMatch 2.0 — ThalassemiaFree AI · Member A Frontend</div>
+          <div className="footer-links">
+            <a href="https://www.bloodwarriors.in" target="_blank" rel="noreferrer">bloodwarriors.in</a>
+            <a href="https://www.bloodwarriors.in/about" target="_blank" rel="noreferrer">About</a>
+            <a href="https://www.bloodwarriors.in/leaderboard" target="_blank" rel="noreferrer">Leaderboard</a>
+          </div>
+        </div>
+      </footer>
+
+      {/* CHATBOT TRIGGER FAB */}
+      <div className="fab" onClick={() => setIsChatOpen(!isChatOpen)} aria-label="Open Chat with Veeru">
+        <svg stroke="#fff" fill="#fff" strokeWidth="0" viewBox="0 0 448 512" height="26" width="26" xmlns="http://www.w3.org/2000/svg">
+          <path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-32.6-16.3-54-29.1-75.5-66-5.7-9.8 5.7-9.1 16.3-30.3 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 35.2 15.2 49 16.5 66.6 13.9 10.7-1.6 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/>
+        </svg>
+      </div>
+
+      {/* VEERU CHAT DRAWER */}
+      <div className={`chat-panel ${isChatOpen ? '' : 'closed'}`}>
+        <div className="chat-header">
+          <div className="chat-bot-avatar">🤖</div>
+          <div className="chat-header-info">
+            <div className="chat-bot-name">Veeru 2.0</div>
+            <div className="chat-bot-status"><span style={{ width: '6px', height: '6px', background: '#4ade80', borderRadius: '50%' }}></span>Support Agent</div>
+          </div>
+          <button className="chat-close-btn" onClick={() => setIsChatOpen(false)}>×</button>
+        </div>
+
+        <div className="chat-messages">
+          {chatMessages.map((m, i) => (
+            <div key={i} className={`chat-msg ${m.sender}`}>
+              {m.text}
+            </div>
+          ))}
+          {isTyping && <div className="chat-msg typing">Veeru is typing...</div>}
+        </div>
+
+        <form className="chat-input-area" onSubmit={handleChatSubmit}>
+          <input 
+            type="text" 
+            className="chat-input" 
+            placeholder="Type a message..." 
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+          />
+          <button type="submit" className="chat-send-btn">
+            <svg stroke="currentColor" fill="none" strokeWidth="2" viewBox="0 0 24 24" height="16" width="16" xmlns="http://www.w3.org/2000/svg">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </form>
+      </div>
+
+      {/* SIGN IN MODAL */}
+      {showLoginModal && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <button className="modal-close" onClick={() => setShowLoginModal(false)}>×</button>
+            <div className="auth-title">Sign In to BloodMatch</div>
+            <div className="auth-sub">Select your account type to proceed</div>
+            
+            <div className="role-select-grid">
+              <button 
+                className={`role-btn ${loginRole === 'admin' ? 'active' : ''}`}
+                onClick={() => {
+                  setLoginRole('admin');
+                  setLoginUsername('coordinator@bloodwarriors.in');
+                }}
+              >
+                <span className="role-icon">🧑‍💼</span>
+                <span>NGO Coordinator / Admin</span>
+              </button>
+              <button 
+                className={`role-btn ${loginRole === 'donor' ? 'active' : ''}`}
+                onClick={() => {
+                  setLoginRole('donor');
+                  setLoginUsername('9391551999');
+                }}
+              >
+                <span className="role-icon">🩸</span>
+                <span>Volunteer Blood Donor</span>
+              </button>
+              <button 
+                className={`role-btn ${loginRole === 'patient' ? 'active' : ''}`}
+                onClick={() => {
+                  setLoginRole('patient');
+                  setLoginUsername('guardian_phone');
+                }}
+              >
+                <span className="role-icon">👤</span>
+                <span>Thalassemia Patient Portal</span>
+              </button>
+            </div>
+
+            <div className="auth-input-group">
+              <label className="auth-input-label">Username / Registered Contact</label>
+              <input 
+                type="text" 
+                className="auth-input" 
+                placeholder="Enter email or mobile number" 
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+              />
+            </div>
+            
+            <div className="auth-input-group">
+              <label className="auth-input-label">Password</label>
+              <input 
+                type="password" 
+                className="auth-input" 
+                placeholder="••••••••" 
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+              />
+            </div>
+
+            <button 
+              className="btn-login"
+              onClick={() => {
+                setIsLoggedIn(true);
+                setUserRole(loginRole);
+                setShowLoginModal(false);
+                triggerNotification(`Successfully signed in as ${loginRole === 'admin' ? 'NGO Coordinator' : loginRole === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'}.`, 'success');
+                // Redirect to respective tab
+                if (loginRole === 'admin') setActiveTab('dashboard');
+                else if (loginRole === 'donor') setActiveTab('donor');
+                else if (loginRole === 'patient') setActiveTab('patient');
+              }}
+            >
+              Sign In (Cognito Sandbox)
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
