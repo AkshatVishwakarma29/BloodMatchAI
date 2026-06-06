@@ -86,7 +86,12 @@ def get_dashboard_metrics(db: Session):
     # 5. One-time emergency donors count
     emergency_donors_count = db.query(User).filter(User.role == "Emergency Donor").count()
     
-    # 6. Heatmap clusters: list of states with donor-patient densities
+    # 6. Additional roles count for dynamic breakdown
+    bridge_donor_count = db.query(User).filter(User.role == "Bridge Donor").count()
+    patient_count = db.query(User).filter(User.role == "Patient").count()
+    volunteer_count = db.query(User).filter(User.role == "Volunteer").count()
+    
+    # 7. Heatmap clusters: list of states with donor-patient densities
     # (Since we don't have explicit states in the table, we group by coordinate clusters or extract from latitude/longitude.
     # Hyderabad cluster is at (17.39, 78.46). Let's group by general zones for simple maps)
     # We can fetch coordinates of active donors to populate heatmap
@@ -106,6 +111,9 @@ def get_dashboard_metrics(db: Session):
         "inactivity_rate": inactivity_rate,
         "emergency_donors_count": emergency_donors_count,
         "guest_count": guest_count,
+        "bridge_donor_count": bridge_donor_count,
+        "patient_count": patient_count,
+        "volunteer_count": volunteer_count,
         "rare_blood_stock": {
             "O_Negative": o_neg_donors,
             "B_Negative": b_neg_donors,

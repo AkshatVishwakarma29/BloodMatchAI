@@ -250,3 +250,121 @@ AWS Amplify offers global CDN hosting for React (Vite) single-page applications 
      - Type: `200 (Rewrite)`
    - Click Save.
 7. Access your live application at the provided `.amplifyapp.com` link.
+
+---
+
+## ⚡ 5. AWS Step Functions Outreach State Machine (Member B Task)
+
+AWS Step Functions orchestrates the sequential 3-wave donor outreach. If Wave 1 donors do not respond within a configured interval, the state machine automatically triggers Wave 2, and then Wave 3, before finally escalating to a human coordinator.
+
+### Step-by-Step Provisioning:
+1. Open the **AWS Step Functions Console** and click **Create state machine**.
+2. Select **Blank template** and choose **Design your workflow visually** (standard workflow type).
+3. Drag and drop the following states into the canvas:
+   *   **Task State (Lambda):** `Rank Donors` — Queries `/api/requests/match-preview` to rank the top 9 compatible donors.
+   *   **Choice State:** `Are Donors Available?` — If the candidate list is empty, transition immediately to the `Escalate to Coordinator` task.
+   *   **Map/Loop State (Waves 1 to 3):** Iterate through waves of size 3:
+       *   **Task State (Lambda):** `Dispatch Outreach Wave` — Calls Twilio WhatsApp sandbox to send messages.
+       *   **Wait State:** Set duration (4 hours for production, 15 seconds for sandbox demo testing).
+       *   **Task State (Lambda):** `Check Request Status` — Queries the SQLite/RDS database to see if `Request.status` became `"in_progress"` or `"fulfilled"`.
+       *   **Choice State:** `Is Confirmed?` — If confirmed, exit the map state and transition to `Confirm & End`. If not confirmed and more waves remain, loop to the next wave.
+   *   **Task State (Lambda):** `Escalate to Coordinator` — Alters status to `escalated` and sends an SNS alert.
+4. Click **Create** and assign the necessary IAM Execution Role allowing Lambda invocation.
+
+---
+
+## 🤖 6. Amazon Lex & Bedrock Setup ("Veeru 2.0") (Member B Task)
+
+This configures the conversational interface that donor and patient nodes interact with, including the LLM-powered fallback that handles general inquiries under strict privacy filters.
+
+### Step-by-Step Provisioning:
+1. Open the **Amazon Lex Console** and click **Create bot**.
+2. Configuration:
+   *   Select **Create a blank bot**.
+   *   Bot name: `VeeruBot`.
+   *   COPPA: Select **No**.
+   *   Idle session timeout: `5 minutes`.
+3. Create **Intents**:
+   *   `ConfirmDonation`: Add sample utterances like `"Confirm"`, `"Accept"`, `"Yes, I will donate"`.
+   *   `DeclineDonation`: Add sample utterances like `"Decline"`, `"Snooze"`, `"Cannot donate"`.
+   *   `CheckEligibility`: Add sample utterances like `"Am I eligible"`, `"When can I donate"`, `"Check eligibility"`.
+4. Configure **Fallback Intent**:
+   *   Enable **Fulfillment** and select **Active** for the associated AWS Lambda function (`veeru-llm-fallback`).
+5. Provision the **Fallback Lambda Function**:
+   *   Create a Python Lambda function containing the AWS Bedrock client:
+       ```python
+       import boto3
+       import json
+
+       def lambda_handler(event, context):
+           bedrock = boto3.client(service_name='bedrock-runtime', region_name='us-east-1')
+           
+           # Extract incoming message text and profile details from payload
+           user_msg = event['inputTranscript']
+           
+           # Inject context & double-blind privacy guidelines in System Instruction
+           system_instruction = (
+               "You are Veeru 2.0, an empathetic chatbot for Blood Warriors supporting Thalassemia patients. "
+               "CRITICAL: Under our double-blind system, NEVER reveal names, phone numbers, or details "
+               "of patients to donors or donors to patients. If asked, explain this privacy policy."
+           )
+           
+           body = json.dumps({
+               "prompt": f"System: {system_instruction}\nUser: {user_msg}\nAssistant:",
+               "max_tokens_to_sample": 200,
+               "temperature": 0.5
+           })
+           
+           response = bedrock.invoke_model(
+               modelId='anthropic.claude-3-haiku-20240307-v1:0',
+               contentType='application/json',
+               accept='application/json',
+               body=body
+           )
+           
+           response_body = json.loads(response.get('body').read())
+           reply = response_body.get('completion')
+           
+           return {
+               "sessionState": {
+                   "dialogAction": {
+                       "type": "Close"
+                   },
+                   "intent": {
+                       "name": event['sessionState']['intent']['name'],
+                       "state": "Fulfilled"
+                   }
+               },
+               "messages": [
+                   {
+                       "contentType": "PlainText",
+                       "content": reply
+                   }
+               ]
+           }
+       ```
+
+---
+
+## 📞 7. Twilio Webhook Integration via API Gateway (Member B Task)
+
+Configures the incoming webhooks so that replies to the Twilio WhatsApp Sandbox are processed by the FastAPI backend in real-time.
+
+### Step-by-Step Provisioning:
+1. Open the **Amazon API Gateway Console** and click **Create API**.
+2. Select **HTTP API** (fastest and cheapest for webhooks).
+3. Click **Add Integration** ➔ Choose **HTTP**.
+   *   Method: `POST`.
+   *   URL: Enter your App Runner URL: `https://xxxxxx.ap-south-1.awsapprunner.com/api/outreach/respond`.
+4. Configure Routes:
+   *   Method: `POST`.
+   *   Path: `/api/twilio/webhook`.
+5. Click Next, leave Stage as `$default` (with auto-deploy enabled), and click **Create**.
+6. Copy the **Invoke URL** (e.g., `https://yyyyyy.execute-api.ap-south-1.amazonaws.com`).
+7. Open the **Twilio Console**:
+   *   Go to **Messaging** ➔ **Try it out** ➔ **Send a WhatsApp Message**.
+   *   Navigate to **Sandbox Settings**.
+   *   Paste the API Gateway URL in the **"When a message comes in"** box:
+       `https://yyyyyy.execute-api.ap-south-1.amazonaws.com/api/twilio/webhook`
+   *   Set the method dropdown to `POST`.
+   *   Click Save.

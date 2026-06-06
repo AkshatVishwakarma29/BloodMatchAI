@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Chart, registerables } from 'chart.js';
-import { stats, patients, donors, guests } from './data';
+import { stats as mockStats, patients as mockPatients, donors as mockDonors, guests as mockGuests } from './data';
 
 // Register Chart.js components
 Chart.register(...registerables);
@@ -34,7 +34,47 @@ function haversine(lat1, lon1, lat2, lon2) {
   return c * 6371; // Earth radius in km
 }
 
+const API_BASE_URL = 'http://127.0.0.1:8000';
+
 export default function App() {
+  const [stats, setStats] = useState(mockStats);
+  const [patients, setPatients] = useState(mockPatients);
+  const [donors, setDonors] = useState(mockDonors);
+  const [guests, setGuests] = useState(mockGuests);
+  const [notificationLogs, setNotificationLogs] = useState([]);
+
+  // Registration form states
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [regName, setRegName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regBloodGroup, setRegBloodGroup] = useState('O Positive');
+  const [regGender, setRegGender] = useState('Male');
+  const [regChannel, setRegChannel] = useState('WhatsApp');
+  const [regLanguage, setRegLanguage] = useState('English');
+  const [regJoinBridge, setRegJoinBridge] = useState(true);
+
+  // Fetch real backend notification console logs periodically
+  useEffect(() => {
+    let intervalId;
+    const fetchLogs = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/debug/notifications?limit=30`);
+        if (response.ok) {
+          const data = await response.json();
+          setNotificationLogs(data);
+        }
+      } catch (err) {
+        console.error("Error fetching logs", err);
+      }
+    };
+
+    fetchLogs(); // load once on mount
+    intervalId = setInterval(fetchLogs, 2000); // refresh every 2 seconds
+
+    return () => clearInterval(intervalId);
+  }, []);
+
+
   const [activeTab, setActiveTab] = useState('home');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userRole, setUserRole] = useState(null);
@@ -114,64 +154,130 @@ export default function App() {
     setTimeout(() => setNotification(null), 5000);
   };
 
-  // Perform Donor Matching locally
+  // Load data from FastAPI Backend on Mount
   useEffect(() => {
-    if (!selectedPatientId) return;
+    const loadBackendData = async () => {
+      try {
+        // 1. Fetch Patients
+        const patientsRes = await fetch(`${API_BASE_URL}/api/patients`);
+        if (patientsRes.ok) {
+          const patientsData = await patientsRes.json();
+          const mappedPatients = patientsData.map(p => ({
+            userId: p.id,
+            name: p.name,
+            phone: p.phone,
+            bloodGroup: p.blood_group || 'O Positive',
+            gender: p.gender || 'Any',
+            lat: p.latitude || 17.39,
+            lon: p.longitude || 78.46,
+            quantity: 1, // default needed quantity
+            hospital: 'Gandhi Hospital',
+            bridgeBloodGroup: p.blood_group,
+            bridgeGender: p.gender || 'Any'
+          }));
+          setPatients(mappedPatients);
+          if (mappedPatients.length > 0) {
+            setSelectedPatientId(mappedPatients[0].userId);
+          }
+        }
+
+        // 2. Fetch Donors
+        const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
+        if (donorsRes.ok) {
+          const donorsData = await donorsRes.json();
+          const mappedDonors = donorsData.map(d => ({
+            userId: d.id,
+            name: d.name,
+            phone: d.phone,
+            bloodGroup: d.blood_group || 'O Positive',
+            gender: d.gender || 'Male',
+            lat: d.latitude || 17.39,
+            lon: d.longitude || 78.46,
+            donations: d.donations_till_date || 0,
+            callsRatio: d.calls_to_donations_ratio || 0.0,
+            eligibility: d.eligibility_status || 'eligible',
+            activeStatus: d.user_donation_active_status || 'Active',
+            donorType: d.role || 'Bridge Donor',
+            healthScore: d.health_score || 0.0,
+            churnRisk: d.churn_risk_score || 0.0,
+            preferredChannel: d.preferred_channel || 'WhatsApp',
+            inactiveComment: d.inactive_trigger_comment
+          }));
+          setDonors(mappedDonors);
+        }
+
+        // 3. Fetch Dashboard Metrics
+        const metricsRes = await fetch(`${API_BASE_URL}/api/dashboard/metrics`);
+        if (metricsRes.ok) {
+          const metricsData = await metricsRes.json();
+          setStats({
+            total: metricsData.total_users,
+            eligible: metricsData.total_users - metricsData.inactive_donors_count - metricsData.guest_count,
+            activeBridges: metricsData.active_bridges,
+            inactive: metricsData.inactive_donors_count,
+            guests: metricsData.guest_count,
+            avgCallsToDonationsRatio: metricsData.avg_calls_to_donations_ratio,
+            inactivityRate: metricsData.inactivity_rate,
+            rareBloodStock: metricsData.rare_blood_stock,
+            roleCounts: {
+              Guest: metricsData.guest_count,
+              "Emergency Donor": metricsData.emergency_donors_count,
+              "Bridge Donor": metricsData.bridge_donor_count || 2061,
+              Patient: metricsData.patient_count || 84,
+              Volunteer: metricsData.volunteer_count || 3
+            }
+          });
+        }
+      } catch (err) {
+        console.error("Error loading backend data", err);
+      }
+    };
+
+    loadBackendData();
+  }, []);
+
+  // Perform Donor Matching using backend API
+  useEffect(() => {
+    if (!selectedPatientId || !patients.length) return;
     const patient = patients.find(p => p.userId === selectedPatientId);
     if (!patient) return;
 
     const neededGroup = patient.bridgeBloodGroup || patient.bloodGroup || 'O Positive';
-    const compatibleGroups = COMPATIBILITY[neededGroup] || [neededGroup];
 
-    // Filter compatible active donors
-    let candidates = donors.filter(d => {
-      const isDonor = d.role.includes('Donor');
-      const isActive = d.activeStatus === 'Active';
-      const isComp = compatibleGroups.includes(d.bloodGroup);
-      return isDonor && isActive && isComp;
-    });
-
-    // Score candidates
-    const scored = candidates.map(d => {
-      let score = 100.0;
-      
-      // 1. Proximity penalty
-      const dist = haversine(d.lat, d.lon, patient.lat, patient.lon);
-      const distPenalty = Math.min(dist * 1.5, 40.0);
-      score -= distPenalty;
-
-      // 2. Calls ratio penalty
-      const callsPenalty = Math.min(d.callsRatio * 5.0, 30.0);
-      score -= callsPenalty;
-
-      // 3. Loyalty reward
-      const loyalty = Math.min(d.donations * 1.5, 15.0);
-      score += loyalty;
-
-      // 4. Eligibility soft filter
-      if (d.eligibility !== 'eligible') {
-        score -= 25.0; // Heavy penalty for ineligible
-      }
-
-      // 5. Gender soft constraint
-      const prefGender = patient.bridgeGender || '';
-      if (prefGender && d.gender && prefGender.toLowerCase() !== 'any') {
-        if (prefGender.toLowerCase() !== d.gender.toLowerCase()) {
-          score -= 15.0;
+    const fetchMatches = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/requests/match-preview?blood_group=${encodeURIComponent(neededGroup)}&lat=${patient.lat}&lon=${patient.lon}&gender_pref=${patient.bridgeGender || ''}&limit=15`, {
+          method: 'POST'
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const mapped = data.map(d => ({
+            userId: d.donor_id,
+            name: d.name,
+            phone: d.phone,
+            bloodGroup: d.blood_group,
+            gender: d.gender,
+            distance: d.distance_km.toFixed(1),
+            callsRatio: d.calls_to_donations_ratio,
+            donations: d.donations_till_date,
+            eligibility: d.eligibility_status,
+            score: (d.match_score * 100).toFixed(1), // Scale 0.0-1.0 to 0-100
+            activeStatus: 'Active',
+            donorType: d.donor_type || 'Bridge Donor',
+            healthScore: d.health_score,
+            churnRisk: d.churn_risk_score,
+            preferredChannel: d.preferred_channel
+          }));
+          setMatchedDonors(mapped);
         }
+      } catch (err) {
+        console.error("Failed to fetch matches", err);
       }
+    };
 
-      return {
-        ...d,
-        distance: dist.toFixed(1),
-        score: Math.max(0.0, Math.min(100.0, score)).toFixed(1)
-      };
-    });
+    fetchMatches();
+  }, [selectedPatientId, patients]);
 
-    // Sort descending by score
-    scored.sort((a, b) => b.score - a.score);
-    setMatchedDonors(scored.slice(0, 15));
-  }, [selectedPatientId]);
 
   // Leaflet Map Initialization & Rendering
   useEffect(() => {
@@ -236,7 +342,7 @@ export default function App() {
         mapMarkersGroup.current = null;
       }
     };
-  }, [activeTab]);
+  }, [activeTab, donors, patients]);
 
   // ChartJS Renderings
   useEffect(() => {
@@ -269,12 +375,17 @@ export default function App() {
       // Churn Analysis Donut
       if (churnChartRef.current) {
         if (churnChartInst.current) churnChartInst.current.destroy();
+        const inactiveDonorsList = donors.filter(d => d.activeStatus === 'Inactive');
+        const notDonated1YrCount = inactiveDonorsList.filter(d => d.inactiveComment && d.inactiveComment.toLowerCase().includes('1 year')).length || 361;
+        const limitedActivityCount = inactiveDonorsList.filter(d => d.inactiveComment && d.inactiveComment.toLowerCase().includes('limited')).length || 321;
+        const activeDonorsCount = stats.total - (notDonated1YrCount + limitedActivityCount);
+        
         churnChartInst.current = new Chart(churnChartRef.current, {
           type: 'doughnut',
           data: {
             labels: ['Not donated 1yr', 'Limited activity', 'Active donors'],
             datasets: [{
-              data: [361, 321, stats.total - 682],
+              data: [notDonated1YrCount, limitedActivityCount, activeDonorsCount > 0 ? activeDonorsCount : (stats.total - 682)],
               backgroundColor: ['#dc2626', '#d97706', '#e2e8f0'],
               borderWidth: 0,
               hoverOffset: 4
@@ -294,13 +405,26 @@ export default function App() {
       // Blood supply/demand bar chart
       if (bloodChartRef.current) {
         if (bloodChartInst.current) bloodChartInst.current.destroy();
+        
+        const bloodGroupsOrdered = [
+          'O Positive', 'B Positive', 'A Positive', 'AB Positive',
+          'O Negative', 'B Negative', 'A Negative', 'AB Negative'
+        ];
+        
+        const dynamicDonors = bloodGroupsOrdered.map(bg => 
+          donors.filter(d => d.bloodGroup === bg && d.activeStatus === 'Active').length
+        );
+        const dynamicPatients = bloodGroupsOrdered.map(bg => 
+          patients.filter(p => (p.bridgeBloodGroup || p.bloodGroup) === bg).length
+        );
+
         bloodChartInst.current = new Chart(bloodChartRef.current, {
           type: 'bar',
           data: {
             labels: ['O+', 'B+', 'A+', 'AB+', 'O-', 'B-', 'A-', 'AB-'],
             datasets: [
-              { label: 'Donors', data: [850, 680, 410, 180, 117, 87, 46, 32], backgroundColor: 'rgba(37,99,235,0.7)', borderRadius: 4 },
-              { label: 'Patients Need', data: [331, 285, 78, 49, 20, 9, 6, 8], backgroundColor: 'rgba(192,0,46,0.7)', borderRadius: 4 }
+              { label: 'Donors', data: dynamicDonors, backgroundColor: 'rgba(37,99,235,0.7)', borderRadius: 4 },
+              { label: 'Patients Need', data: dynamicPatients, backgroundColor: 'rgba(192,0,46,0.7)', borderRadius: 4 }
             ]
           },
           options: {
@@ -317,69 +441,184 @@ export default function App() {
         });
       }
     }
-  }, [activeTab]);
+  }, [activeTab, stats, donors, patients]);
 
-  // Trigger outreach logs & simulation response
-  const handleOutreachTrigger = (donor, patient) => {
+  // Trigger outreach logs & simulation response (FastAPI Backend integration)
+  const handleOutreachTrigger = async (donor, patient) => {
     const key = `${donor.userId}_${patient.userId}`;
     if (sentInvites[key]) return;
 
     setSentInvites(prev => ({ ...prev, [key]: 'sending' }));
+    triggerNotification(`Initializing dynamic match request on backend...`, 'info');
 
-    // Helper to generate unique masked IDs for double-blind anonymity
-    const cleanDonorId = donor.userId.replace(/^\\\\x|^\\x/, '').substring(0, 6).toUpperCase();
-    const cleanPatientId = patient.userId.replace(/^\\\\x|^\\x/, '').substring(0, 6).toUpperCase();
-
-    const logId = outreachLogs.length + 1;
-    const newLog = {
-      id: logId,
-      donorId: `Donor #D-${cleanDonorId}`,
-      patientId: `Fighter #F-${cleanPatientId}`,
-      patientName: `Fighter #F-${cleanPatientId}`,
-      channel: 'WhatsApp Secure Proxy',
-      status: 'Sent',
-      message: `WhatsApp template: A Thalassemia patient needs a transfusion of ${donor.bloodGroup} blood at a Hyderabad hospital. Reply YES to confirm.`,
-      sentAt: 'Just now',
-      response: 'Waiting...'
-    };
-
-    setOutreachLogs(prev => [newLog, ...prev]);
-    triggerNotification(`Secure proxy outreach sent to Donor #D-${cleanDonorId}`, 'success');
-
-    // Simulate reply callback after 3 seconds
-    setTimeout(() => {
-      setSentInvites(prev => ({ ...prev, [key]: 'sent' }));
-      const accept = Math.random() > 0.45;
-      const mockToken = `TXN-${Math.floor(10000 + Math.random() * 90000).toString(16).toUpperCase()}`;
-      
-      setOutreachLogs(prevLogs => {
-        return prevLogs.map(l => {
-          if (l.id === logId) {
-            return {
-              ...l,
-              status: accept ? 'Confirmed' : 'Snoozed',
-              response: accept ? 'YES, I will donate.' : 'Snooze request registered.',
-              message: accept 
-                ? `Confirmed. Verification Token ${mockToken} generated. Placed on Secure Proxy Line.` 
-                : 'Snooze registered. Dignity rules applied (30 days contact lock).'
-            };
-          }
-          return l;
-        });
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/requests`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          patient_id: patient.userId,
+          blood_units_needed: parseFloat(patient.quantity) || 1.0,
+          hospital_name: patient.hospital || 'Gandhi Hospital',
+          needed_by: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // 3 days from now
+        })
       });
 
-      if (accept) {
-        setActiveDonationToken(mockToken);
-        setHyderabadQuestCount(prev => prev + 1);
-        triggerNotification(`Match confirmed! Verification Token ${mockToken} generated for Donor #D-${cleanDonorId}.`, 'success');
+      if (response.ok) {
+        setSentInvites(prev => ({ ...prev, [key]: 'sent' }));
+        triggerNotification(`Active matching request created. Wave outreach initiated!`, 'success');
+        
+        // Wait 4 seconds and check if a verification token was generated on the backend
+        setTimeout(async () => {
+          try {
+            const reqData = await response.json();
+            const detailsRes = await fetch(`${API_BASE_URL}/api/requests/${reqData.id}`);
+            if (detailsRes.ok) {
+              const details = await detailsRes.json();
+              const eventWithToken = details.outreach_events.find(ev => ev.verification_token);
+              if (eventWithToken) {
+                setActiveDonationToken(eventWithToken.verification_token);
+                triggerNotification(`Action: Active Token ${eventWithToken.verification_token} loaded for double-blind verification.`, 'success');
+              }
+            }
+          } catch (err) {
+            console.error(err);
+          }
+        }, 4000);
       } else {
-        triggerNotification(`Donor snoozed outreach. System locked contact for 30 days.`, 'warning');
+        setSentInvites(prev => ({ ...prev, [key]: null }));
+        triggerNotification(`Failed to trigger outreach. Check backend connection.`, 'warning');
       }
-    }, 3000);
+    } catch (err) {
+      console.error("Failed to post request", err);
+      setSentInvites(prev => ({ ...prev, [key]: null }));
+      triggerNotification(`Backend connection failed.`, 'warning');
+    }
   };
 
-  // Bot response engine
-  const handleChatSubmit = (e) => {
+  // Handle Donor Registration in Frontend
+  const handleDonorRegistration = async (e) => {
+    e.preventDefault();
+    if (!regName.trim() || !regPhone.trim()) {
+      triggerNotification("Please enter both Name and Phone number.", "warning");
+      return;
+    }
+    
+    triggerNotification("Submitting registration to backend...", "info");
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/donors/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: regName.trim(),
+          phone: regPhone.trim(),
+          blood_group: regBloodGroup,
+          gender: regGender,
+          preferred_channel: regChannel,
+          preferred_language: regLanguage,
+          join_bridge: regJoinBridge
+        })
+      });
+      
+      const data = await response.json();
+      if (response.ok) {
+        triggerNotification(`Registration successful! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'}.`, 'success');
+        
+        // Auto sign in as the registered donor
+        setIsLoggedIn(true);
+        setUserRole('donor');
+        setShowLoginModal(false);
+        setIsRegisterMode(false); // Reset to sign-in view
+        setActiveTab('donor');
+        
+        // Clear fields
+        setRegName('');
+        setRegPhone('');
+        
+        // Refresh donor list and stats from backend
+        const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
+        if (donorsRes.ok) {
+          const donorsData = await donorsRes.json();
+          const mappedDonors = donorsData.map(d => ({
+            userId: d.id,
+            name: d.name,
+            phone: d.phone,
+            bloodGroup: d.blood_group || 'O Positive',
+            gender: d.gender || 'Male',
+            lat: d.latitude || 17.39,
+            lon: d.longitude || 78.46,
+            donations: d.donations_till_date || 0,
+            callsRatio: d.calls_to_donations_ratio || 0.0,
+            eligibility: d.eligibility_status || 'eligible',
+            activeStatus: d.user_donation_active_status || 'Active',
+            donorType: d.role || 'Bridge Donor',
+            healthScore: d.health_score || 0.0,
+            churnRisk: d.churn_risk_score || 0.0,
+            preferredChannel: d.preferred_channel || 'WhatsApp',
+            inactiveComment: d.inactive_trigger_comment
+          }));
+          setDonors(mappedDonors);
+        }
+        
+        const metricsRes = await fetch(`${API_BASE_URL}/api/dashboard/metrics`);
+        if (metricsRes.ok) {
+          const metricsData = await metricsRes.json();
+          setStats({
+            total: metricsData.total_users,
+            eligible: metricsData.total_users - metricsData.inactive_donors_count - metricsData.guest_count,
+            activeBridges: metricsData.active_bridges,
+            inactive: metricsData.inactive_donors_count,
+            guests: metricsData.guest_count,
+            avgCallsToDonationsRatio: metricsData.avg_calls_to_donations_ratio,
+            inactivityRate: metricsData.inactivity_rate,
+            rareBloodStock: metricsData.rare_blood_stock,
+            roleCounts: {
+              Guest: metricsData.guest_count,
+              "Emergency Donor": metricsData.emergency_donors_count,
+              "Bridge Donor": metricsData.bridge_donor_count || 2061,
+              Patient: metricsData.patient_count || 84,
+              Volunteer: metricsData.volunteer_count || 3
+            }
+          });
+        }
+      } else {
+        triggerNotification(data.detail || "Registration failed. Please try again.", "warning");
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification("Connection to backend registration failed.", "warning");
+    }
+  };
+
+  // Handle Triggering Scheduled Transfusions Warnings Simulation
+  const handleTriggerScheduledTransfusion = async () => {
+    if (!selectedPatientId) {
+      triggerNotification("Please select a patient first.", "warning");
+      return;
+    }
+    triggerNotification("Triggering scheduled transfusion checks on backend...", "info");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/outreach/trigger-schedule-check?patient_id=${selectedPatientId}`, {
+        method: 'POST'
+      });
+      if (response.ok) {
+        triggerNotification("Scheduled check triggered! Monitoring logs for bridge alerts and emergency waves.", "success");
+      } else {
+        const data = await response.json();
+        triggerNotification(data.detail || "Failed to trigger scheduled transfusion check.", "warning");
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification("Backend connection failed.", "warning");
+    }
+  };
+
+  // Bot response engine (FastAPI Backend integration)
+  const handleChatSubmit = async (e) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
 
@@ -388,37 +627,39 @@ export default function App() {
     setChatInput('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      let botText = "I understand you are asking about BloodMatch coordination. To make India Thalassemia-free, BloodMatch 2.0 automatically ranks compatible donors, calculates geographic distances, and manages outreach logs. How can I help you?";
-      const msg = userText.toLowerCase();
-
-      if (
-        msg.includes('who is the receiver') || 
-        msg.includes('who is my donor') || 
-        msg.includes('who is donating') || 
-        msg.includes('who did i donate') || 
-        msg.includes('patient name') || 
-        msg.includes('recipient') || 
-        msg.includes('donor name') || 
-        msg.includes('donor identity') || 
-        msg.includes('receiver name')
-      ) {
-        botText = "To keep this cause noble and protect privacy, we maintain complete anonymity between donors and receivers. Both parties remain anonymous, and all donation coordination is handled securely through the NGO proxy line.";
-      } else if (msg.includes('eligible') || msg.includes('criteria') || msg.includes('who can')) {
-        botText = "To donate blood, you must be 18–65 years old, weigh at least 45 kg, have a hemoglobin level >= 12.5 g/dl, and have not donated in the last 90 days. You must also have no active clinical conditions.";
-      } else if (msg.includes('inactive') || msg.includes('churn')) {
-        botText = `Our database flags ${stats.inactive} inactive donors (9.7% of total). 361 haven't donated in the last year, and 321 have very limited activity despite calls. We re-engage them through Bedrock campaigns.`;
-      } else if (msg.includes('shortage') || msg.includes('rare') || msg.includes('ab negative') || msg.includes('o negative')) {
-        botText = "We have a critical shortage of rare types. There are only 32 AB-Negative donors (4:1 coverage ratio) and 117 O-Negative donors in our Hyderabad cluster. They need careful rotation!";
-      } else if (msg.includes('hello') || msg.includes('hi') || msg.includes('hey')) {
-        botText = "Hello! I am Veeru 2.0, your AI Support Assistant for Blood Warriors. Ask me anything about donor eligibility, matching criteria, or rare blood shortages!";
-      } else if (msg.includes('whatsapp') || msg.includes('twilio') || msg.includes('sandbox')) {
-        botText = "We integrate with Twilio WhatsApp Sandbox for safe testing. During this demo, trigger outreach from the Matching tab and you will see the logs update in real-time.";
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/chatbot`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          phone: isLoggedIn && userRole !== 'admin' ? loginUsername : "+91 0000000000",
+          message: userText
+        })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setChatMessages(prev => [...prev, { sender: 'bot', text: data.reply }]);
+        
+        // If message confirmed a donation intent, extract and track token
+        if (userText.toUpperCase().includes('CONFIRM')) {
+          // Extract token from bot response if present (BB-XXXXXX)
+          const tokenMatch = data.reply.match(/BB-[A-F0-9]{6}/);
+          if (tokenMatch) {
+            setActiveDonationToken(tokenMatch[0]);
+            triggerNotification(`Action: Token ${tokenMatch[0]} registered.`, 'success');
+          }
+        }
+      } else {
+        setChatMessages(prev => [...prev, { sender: 'bot', text: "Sorry, I am having trouble connecting to my backend right now." }]);
       }
-
-      setChatMessages(prev => [...prev, { sender: 'bot', text: botText }]);
+    } catch (err) {
+      console.error("Failed to fetch bot message", err);
+      setChatMessages(prev => [...prev, { sender: 'bot', text: "Sorry, I encountered an error connecting to my server." }]);
+    } finally {
       setIsTyping(false);
-    }, 1200);
+    }
   };
 
   return (
@@ -1455,7 +1696,7 @@ export default function App() {
           <div className="alert">
             <span style={{ fontSize: '18px' }}>🚨</span>
             <div className="alert-text">
-              <strong>Critical Shortage Alert:</strong> Only <strong>32 AB-Negative</strong> and <strong>117 O-Negative</strong> donors are registered for 28 patients needing these rare types. Calls-to-donation worst case is <strong>23 calls → 0 donations</strong>. AI scheduling avoids donor burnout.
+              <strong>Critical Shortage Alert:</strong> Only <strong>{stats.rareBloodStock?.AB_Negative !== undefined ? stats.rareBloodStock.AB_Negative : '32'} AB-Negative</strong> and <strong>{stats.rareBloodStock?.O_Negative !== undefined ? stats.rareBloodStock.O_Negative : '117'} O-Negative</strong> donors are registered for 28 patients needing these rare types. Calls-to-donation worst case is <strong>23 calls → 0 donations</strong>. AI scheduling avoids donor burnout.
             </div>
             <div className="alert-badge">⚠ Action Required</div>
           </div>
@@ -1492,19 +1733,84 @@ export default function App() {
               <button 
                 className="btn-hero-primary" 
                 style={{ padding: '0 20px', fontSize: '12.5px', whiteSpace: 'nowrap', height: '38px', cursor: 'pointer' }}
-                onClick={() => {
+                onClick={async () => {
                   if (!verifyTokenInput.trim()) {
                     triggerNotification("Please enter a verification token.", "warning");
                     return;
                   }
                   const token = verifyTokenInput.trim().toUpperCase();
-                  if (activeDonationToken === token) {
-                    setVerifiedTokens(prev => ({ ...prev, [token]: true }));
-                    setLifeCredits(prev => prev + 100);
-                    triggerNotification(`Success! Donation token ${token} verified. Recipient request completed anonymously.`, 'success');
-                    setVerifyTokenInput('');
-                  } else {
-                    triggerNotification(`Error: Donation token ${token} not found or already verified.`, 'warning');
+                  triggerNotification(`Contacting backend verification ledger...`, 'info');
+                  
+                  try {
+                    const response = await fetch(`${API_BASE_URL}/api/outreach/verify-token`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json'
+                      },
+                      body: JSON.stringify({ token })
+                    });
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                      setVerifiedTokens(prev => ({ ...prev, [token]: true }));
+                      setLifeCredits(prev => prev + 100);
+                      setHyderabadQuestCount(prev => prev + 1);
+                      triggerNotification(data.message, 'success');
+                      setVerifyTokenInput('');
+                      
+                      // Refresh dashboard stats, donors and patients
+                      const metricsRes = await fetch(`${API_BASE_URL}/api/dashboard/metrics`);
+                      if (metricsRes.ok) {
+                        const metricsData = await metricsRes.json();
+                        setStats({
+                          total: metricsData.total_users,
+                          eligible: metricsData.total_users - metricsData.inactive_donors_count - metricsData.guest_count,
+                          activeBridges: metricsData.active_bridges,
+                          inactive: metricsData.inactive_donors_count,
+                          guests: metricsData.guest_count,
+                          avgCallsToDonationsRatio: metricsData.avg_calls_to_donations_ratio,
+                          inactivityRate: metricsData.inactivity_rate,
+                          rareBloodStock: metricsData.rare_blood_stock,
+                          roleCounts: {
+                            Guest: metricsData.guest_count,
+                            "Emergency Donor": metricsData.emergency_donors_count,
+                            "Bridge Donor": metricsData.bridge_donor_count || 2061,
+                            Patient: metricsData.patient_count || 84,
+                            Volunteer: metricsData.volunteer_count || 3
+                          }
+                        });
+                      }
+
+                      // Fetch updated Donors list to refresh map & leaderboard UI
+                      const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
+                      if (donorsRes.ok) {
+                        const donorsData = await donorsRes.json();
+                        const mappedDonors = donorsData.map(d => ({
+                          userId: d.id,
+                          name: d.name,
+                          phone: d.phone,
+                          bloodGroup: d.blood_group || 'O Positive',
+                          gender: d.gender || 'Male',
+                          lat: d.latitude || 17.39,
+                          lon: d.longitude || 78.46,
+                          donations: d.donations_till_date || 0,
+                          callsRatio: d.calls_to_donations_ratio || 0.0,
+                          eligibility: d.eligibility_status || 'eligible',
+                          activeStatus: d.user_donation_active_status || 'Active',
+                          donorType: d.role || 'Bridge Donor',
+                          healthScore: d.health_score || 0.0,
+                          churnRisk: d.churn_risk_score || 0.0,
+                          preferredChannel: d.preferred_channel || 'WhatsApp',
+                          inactiveComment: d.inactive_trigger_comment
+                        }));
+                        setDonors(mappedDonors);
+                      }
+                    } else {
+                      triggerNotification(data.detail || 'Invalid token verification request.', 'warning');
+                    }
+                  } catch (err) {
+                    console.error("Token verification failed", err);
+                    triggerNotification("Server connection error during verification.", "warning");
                   }
                 }}
               >
@@ -1522,7 +1828,7 @@ export default function App() {
                   <div className="kpi-icon-wrap">📞</div>
                   <span className="kpi-badge badge-red">▲ Worst: 23.0</span>
                 </div>
-                <div className="kpi-val">1.85</div>
+                <div className="kpi-val">{stats.avgCallsToDonationsRatio !== undefined ? stats.avgCallsToDonationsRatio : '1.85'}</div>
                 <div className="kpi-label">Calls-to-Donation Ratio</div>
                 <div className="kpi-meta">Avg. calls per successful donation</div>
                 <div className="kpi-target">🎯 AI Target: &lt; 0.8 · Smarter ranking, not more calls</div>
@@ -1530,7 +1836,7 @@ export default function App() {
               <div className="kpi-card c-amber">
                 <div className="kpi-top">
                   <div className="kpi-icon-wrap">😴</div>
-                  <span className="kpi-badge badge-red">9.7% of total</span>
+                  <span className="kpi-badge badge-red">{stats.inactivityRate !== undefined ? stats.inactivityRate : '9.7'}% of total</span>
                 </div>
                 <div className="kpi-val">{stats.inactive}</div>
                 <div className="kpi-label">Inactive Donors</div>
@@ -1588,23 +1894,55 @@ export default function App() {
                   <div>
                     <div className="prog-row">
                       <div className="prog-label">Guest</div>
-                      <div className="prog-track"><div className="prog-fill" style={{ width: '34.4%', background: '#94a3b8' }}></div></div>
-                      <div className="prog-count">2,420</div>
+                      <div className="prog-track">
+                        <div 
+                          className="prog-fill" 
+                          style={{ 
+                            width: `${stats.total > 0 ? (stats.roleCounts.Guest / stats.total * 100).toFixed(1) : '34.4'}%`, 
+                            background: '#94a3b8' 
+                          }}
+                        ></div>
+                      </div>
+                      <div className="prog-count">{(stats.roleCounts.Guest || 2420).toLocaleString()}</div>
                     </div>
                     <div className="prog-row">
                       <div className="prog-label">Emergency</div>
-                      <div className="prog-track"><div className="prog-fill" style={{ width: '33.9%', background: '#d97706' }}></div></div>
-                      <div className="prog-count">2,385</div>
+                      <div className="prog-track">
+                        <div 
+                          className="prog-fill" 
+                          style={{ 
+                            width: `${stats.total > 0 ? (stats.roleCounts["Emergency Donor"] / stats.total * 100).toFixed(1) : '33.9'}%`, 
+                            background: '#d97706' 
+                          }}
+                        ></div>
+                      </div>
+                      <div className="prog-count">{(stats.roleCounts["Emergency Donor"] || 2385).toLocaleString()}</div>
                     </div>
                     <div className="prog-row">
                       <div className="prog-label">Bridge</div>
-                      <div className="prog-track"><div className="prog-fill" style={{ width: '29.3%', background: '#2563eb' }}></div></div>
-                      <div className="prog-count">2,061</div>
+                      <div className="prog-track">
+                        <div 
+                          className="prog-fill" 
+                          style={{ 
+                            width: `${stats.total > 0 ? (stats.roleCounts["Bridge Donor"] / stats.total * 100).toFixed(1) : '29.3'}%`, 
+                            background: '#2563eb' 
+                          }}
+                        ></div>
+                      </div>
+                      <div className="prog-count">{(stats.roleCounts["Bridge Donor"] || 2061).toLocaleString()}</div>
                     </div>
                     <div className="prog-row">
                       <div className="prog-label">Patient</div>
-                      <div className="prog-track"><div className="prog-fill" style={{ width: '1.2%', background: '#c0002e' }}></div></div>
-                      <div className="prog-count">84</div>
+                      <div className="prog-track">
+                        <div 
+                          className="prog-fill" 
+                          style={{ 
+                            width: `${stats.total > 0 ? (stats.roleCounts.Patient / stats.total * 100).toFixed(1) : '1.2'}%`, 
+                            background: '#c0002e' 
+                          }}
+                        ></div>
+                      </div>
+                      <div className="prog-count">{(stats.roleCounts.Patient || 84).toLocaleString()}</div>
                     </div>
                   </div>
                 </div>
@@ -1630,30 +1968,32 @@ export default function App() {
                 <div className="card-title">⚠️ Churn Risk — Re-engagement Queue</div>
                 <div className="card-sub">Active donors flagged for inactivity. Bedrock drafts automated re-engagement triggers.</div>
                 <div className="churn-list-container">
-                  <div className="churn-item">
-                    <div className="churn-avatar">O+</div>
-                    <div className="churn-info">
-                      <div className="churn-name">Bridge Donor — O Positive</div>
-                      <div className="churn-reason">Inactivity: Multiple calls, zero donations</div>
-                      <button className="btn-reengage" onClick={() => triggerNotification('Bedrock generated re-engagement message: "Hi! We noticed you haven\'t donated recently. A child with Thalassemia needs O+ blood soon. Reply YES to check availability."', 'success')}>Re-engage</button>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="churn-ratio">23:1</div>
-                      <div className="churn-lbl">call ratio</div>
-                    </div>
-                  </div>
-                  <div className="churn-item">
-                    <div className="churn-avatar" style={{ background: 'var(--amber-bg)', color: 'var(--amber)' }}>B+</div>
-                    <div className="churn-info">
-                      <div className="churn-name">Bridge Donor — B Positive</div>
-                      <div className="churn-reason">Inactivity: No donation in 12 months</div>
-                      <button className="btn-reengage" onClick={() => triggerNotification('Bedrock generated re-engagement message: "Greetings! You are eligible again to save lives. Would you like to schedule your next donation cycle? Reply YES."', 'success')}>Re-engage</button>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div className="churn-ratio">12:1</div>
-                      <div className="churn-lbl">call ratio</div>
-                    </div>
-                  </div>
+                  {donors.filter(d => d.activeStatus === 'Inactive').slice(0, 4).map(d => {
+                    const bgShort = d.bloodGroup.replace(' Positive', '+').replace(' Negative', '-');
+                    const isRed = bgShort.includes('-');
+                    return (
+                      <div className="churn-item" key={d.userId}>
+                        <div className="churn-avatar" style={isRed ? { background: 'var(--red-bg)', color: 'var(--red)' } : { background: 'var(--amber-bg)', color: 'var(--amber)' }}>{bgShort}</div>
+                        <div className="churn-info">
+                          <div className="churn-name">{d.donorType} — {d.bloodGroup}</div>
+                          <div className="churn-reason">Inactivity: {d.inactiveComment || 'No donation in last 12 months'}</div>
+                          <button 
+                            className="btn-reengage" 
+                            onClick={() => triggerNotification(`Bedrock generated re-engagement message: "Hi! We noticed you haven't donated recently. A child with Thalassemia needs ${bgShort} blood soon. Reply YES to check availability."`, 'success')}
+                          >
+                            Re-engage
+                          </button>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div className="churn-ratio">{d.callsRatio ? `${d.callsRatio.toFixed(1)}:1` : '1.8:1'}</div>
+                          <div className="churn-lbl">call ratio</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {donors.filter(d => d.activeStatus === 'Inactive').length === 0 && (
+                    <div style={{ color: 'var(--muted)', fontSize: '12px', padding: '10px 0' }}>No inactive donors currently flagged.</div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1662,11 +2002,15 @@ export default function App() {
             <div className="section-label">System Performance</div>
             <div className="footer-stats">
               <div className="fstat">
-                <div className="fstat-val">1,718</div>
+                <div className="fstat-val">
+                  {donors.filter(d => d.donorType === 'Bridge Donor' && d.eligibility === 'eligible' && d.activeStatus === 'Active').length.toLocaleString()}
+                </div>
                 <div className="fstat-lbl">Bridge Donors — Eligible & Active</div>
               </div>
               <div className="fstat">
-                <div className="fstat-val">1,587</div>
+                <div className="fstat-val">
+                  {donors.filter(d => d.donorType === 'Emergency Donor' && d.eligibility === 'eligible' && d.activeStatus === 'Active').length.toLocaleString()}
+                </div>
                 <div className="fstat-lbl">Emergency Donors — Ready to Engage</div>
               </div>
               <div className="fstat" style={{ color: 'var(--green)' }}>
@@ -1694,19 +2038,29 @@ export default function App() {
             <div className="portal-grid">
               {/* Left Column: Matcher Control & List */}
               <div>
-                <div className="match-selector-wrap">
-                  <label className="match-label" style={{ display: 'block', marginBottom: '6px' }}>Select Patient Transfusion Request</label>
-                  <select 
-                    className="match-selector" 
-                    value={selectedPatientId} 
-                    onChange={(e) => setSelectedPatientId(e.target.value)}
-                  >
-                    {patients.map(p => (
-                      <option key={p.userId} value={p.userId}>
-                        Patient {p.userId.substring(0, 8)} ({p.bridgeBloodGroup || p.bloodGroup}) - Needs {p.quantity} Unit(s)
-                      </option>
-                    ))}
-                  </select>
+                <div className="match-selector-wrap" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <label className="match-label" style={{ display: 'block', marginBottom: '2px' }}>Select Patient Transfusion Request</label>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <select 
+                      className="match-selector" 
+                      value={selectedPatientId} 
+                      onChange={(e) => setSelectedPatientId(e.target.value)}
+                      style={{ flex: 1, margin: 0 }}
+                    >
+                      {patients.map(p => (
+                        <option key={p.userId} value={p.userId}>
+                          Patient {p.userId.substring(0, 8)} ({p.bridgeBloodGroup || p.bloodGroup}) - Needs {p.quantity} Unit(s)
+                        </option>
+                      ))}
+                    </select>
+                    <button 
+                      className="btn-hero-primary"
+                      onClick={handleTriggerScheduledTransfusion}
+                      style={{ padding: '0 15px', height: '38px', fontSize: '11.5px', whiteSpace: 'nowrap', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', background: '#d97706', borderColor: '#d97706' }}
+                    >
+                      ⏰ Simulate Scheduled Transfusion Check
+                    </button>
+                  </div>
                 </div>
 
                 {/* Patient Detail Summary */}
@@ -1776,47 +2130,41 @@ export default function App() {
                 </p>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '480px', overflowY: 'auto', paddingRight: '4px' }}>
-                  {outreachLogs.map(log => (
-                    <div key={log.id} style={{
-                      background: 'var(--surface2)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '10px',
-                      padding: '12px 14px',
-                      fontSize: '12px',
-                      boxShadow: 'var(--shadow-sm)'
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                        <span style={{ fontWeight: 700, color: 'var(--text-secondary)' }}>Log ID #{log.id}</span>
-                        <span style={{
-                          fontSize: '10px',
-                          fontWeight: 700,
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          background: log.status === 'Confirmed' ? 'var(--green-bg)' : log.status === 'Snoozed' ? 'var(--amber-bg)' : 'var(--blue-bg)',
-                          color: log.status === 'Confirmed' ? 'var(--green)' : log.status === 'Snoozed' ? 'var(--amber)' : 'var(--blue)'
-                        }}>{log.status}</span>
-                      </div>
-                      <div style={{ color: 'var(--text)', marginBottom: '4px' }}>
-                        To Donor ID: <b>{log.donorId}</b> for {log.patientName} ({log.channel})
-                      </div>
-                      <div style={{ fontSize: '11px', color: 'var(--muted)', fontStyle: 'italic', marginBottom: '6px' }}>
-                        "{log.message}"
-                      </div>
-                      <div style={{
-                        background: 'white',
-                        border: '1px solid var(--border-light)',
-                        borderRadius: '6px',
-                        padding: '6px 10px',
-                        fontSize: '11px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                      }}>
-                        <span style={{ color: 'var(--muted)' }}>Response:</span>
-                        <span style={{ fontWeight: 650, color: log.status === 'Confirmed' ? 'var(--green)' : 'var(--text-secondary)' }}>{log.response}</span>
-                      </div>
+                  {notificationLogs.length === 0 ? (
+                    <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)', fontSize: '12.5px' }}>
+                      No outreach events logged yet. Trigger an invite to see real-time orchestrations.
                     </div>
-                  ))}
+                  ) : (
+                    notificationLogs.map((logLine, idx) => {
+                      const match = logLine.match(/^\[(.*?)\] (.*)$/);
+                      const timestamp = match ? match[1] : '';
+                      const message = match ? match[2] : logLine;
+                      
+                      const isCrisis = message.includes('CRISIS') || message.includes('🚨') || message.includes('⚠️') || message.includes('ESCALATION');
+                      const isSuccess = message.includes('SUCCESS') || message.includes('✅') || message.includes('VERIFIED') || message.includes('Confirmed');
+                      const isWave = message.includes('🌊') || message.includes('Wave');
+
+                      return (
+                        <div key={idx} style={{
+                          background: isCrisis ? 'rgba(239, 68, 68, 0.08)' : isSuccess ? 'rgba(16, 185, 129, 0.08)' : isWave ? 'rgba(59, 130, 246, 0.08)' : 'var(--surface2)',
+                          border: `1px solid ${isCrisis ? 'rgba(239, 68, 68, 0.2)' : isSuccess ? 'rgba(16, 185, 129, 0.2)' : isWave ? 'rgba(59, 130, 246, 0.2)' : 'var(--border)'}`,
+                          borderRadius: '10px',
+                          padding: '12px 14px',
+                          fontSize: '12px',
+                          boxShadow: 'var(--shadow-sm)',
+                          color: isCrisis ? '#b91c1c' : isSuccess ? '#047857' : isWave ? '#1d4ed8' : 'var(--text)'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--muted)', marginBottom: '4px', fontWeight: 600 }}>
+                            <span>{isCrisis ? '🚨 SYSTEM ALERT' : isSuccess ? '✅ TRANSACTION' : isWave ? '🌊 WAVE OUTREACH' : 'LOG'}</span>
+                            <span>{timestamp.split(' ')[1] || timestamp}</span>
+                          </div>
+                          <div style={{ fontWeight: 600, lineHeight: '1.45', wordBreak: 'break-word' }}>
+                            {message}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>
@@ -2246,84 +2594,245 @@ export default function App() {
         </form>
       </div>
 
-      {/* SIGN IN MODAL */}
+      {/* SIGN IN / REGISTER MODAL */}
       {showLoginModal && (
         <div className="modal-overlay">
-          <div className="modal-content">
-            <button className="modal-close" onClick={() => setShowLoginModal(false)}>×</button>
-            <div className="auth-title">Sign In to BloodMatch</div>
-            <div className="auth-sub">Select your account type to proceed</div>
+          <div className="modal-content" style={{ width: '450px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <button className="modal-close" onClick={() => { setShowLoginModal(false); setIsRegisterMode(false); }}>×</button>
             
-            <div className="role-select-grid">
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '1.25rem', paddingBottom: '0.5rem' }}>
               <button 
-                className={`role-btn ${loginRole === 'admin' ? 'active' : ''}`}
-                onClick={() => {
-                  setLoginRole('admin');
-                  setLoginUsername('coordinator@bloodwarriors.in');
+                style={{
+                  flex: 1,
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  color: !isRegisterMode ? 'var(--primary)' : 'var(--muted)',
+                  borderBottom: !isRegisterMode ? '2px solid var(--primary)' : 'none',
+                  padding: '8px',
+                  cursor: 'pointer'
                 }}
+                onClick={() => setIsRegisterMode(false)}
               >
-                <span className="role-icon">🧑‍💼</span>
-                <span>NGO Coordinator / Admin</span>
+                Sign In
               </button>
               <button 
-                className={`role-btn ${loginRole === 'donor' ? 'active' : ''}`}
-                onClick={() => {
-                  setLoginRole('donor');
-                  setLoginUsername('9391551999');
+                style={{
+                  flex: 1,
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  color: isRegisterMode ? 'var(--primary)' : 'var(--muted)',
+                  borderBottom: isRegisterMode ? '2px solid var(--primary)' : 'none',
+                  padding: '8px',
+                  cursor: 'pointer'
                 }}
+                onClick={() => setIsRegisterMode(true)}
               >
-                <span className="role-icon">🩸</span>
-                <span>Volunteer Blood Donor</span>
-              </button>
-              <button 
-                className={`role-btn ${loginRole === 'patient' ? 'active' : ''}`}
-                onClick={() => {
-                  setLoginRole('patient');
-                  setLoginUsername('guardian_phone');
-                }}
-              >
-                <span className="role-icon">👤</span>
-                <span>Thalassemia Patient Portal</span>
+                Register as Donor
               </button>
             </div>
 
-            <div className="auth-input-group">
-              <label className="auth-input-label">Username / Registered Contact</label>
-              <input 
-                type="text" 
-                className="auth-input" 
-                placeholder="Enter email or mobile number" 
-                value={loginUsername}
-                onChange={(e) => setLoginUsername(e.target.value)}
-              />
-            </div>
-            
-            <div className="auth-input-group">
-              <label className="auth-input-label">Password</label>
-              <input 
-                type="password" 
-                className="auth-input" 
-                placeholder="••••••••" 
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-              />
-            </div>
+            {!isRegisterMode ? (
+              <>
+                <div className="auth-title" style={{ marginTop: '0' }}>Sign In to BloodMatch</div>
+                <div className="auth-sub">Select your account type to proceed</div>
+                
+                <div className="role-select-grid">
+                  <button 
+                    className={`role-btn ${loginRole === 'admin' ? 'active' : ''}`}
+                    onClick={() => {
+                      setLoginRole('admin');
+                      setLoginUsername('coordinator@bloodwarriors.in');
+                    }}
+                  >
+                    <span className="role-icon">🧑‍💼</span>
+                    <span>NGO Coordinator / Admin</span>
+                  </button>
+                  <button 
+                    className={`role-btn ${loginRole === 'donor' ? 'active' : ''}`}
+                    onClick={() => {
+                      setLoginRole('donor');
+                      setLoginUsername('9391551999');
+                    }}
+                  >
+                    <span className="role-icon">🩸</span>
+                    <span>Volunteer Blood Donor</span>
+                  </button>
+                  <button 
+                    className={`role-btn ${loginRole === 'patient' ? 'active' : ''}`}
+                    onClick={() => {
+                      setLoginRole('patient');
+                      setLoginUsername('guardian_phone');
+                    }}
+                  >
+                    <span className="role-icon">👤</span>
+                    <span>Thalassemia Patient Portal</span>
+                  </button>
+                </div>
 
-            <button 
-              className="btn-login"
-              onClick={() => {
-                setIsLoggedIn(true);
-                setUserRole(loginRole);
-                setShowLoginModal(false);
-                triggerNotification(`Successfully signed in as ${loginRole === 'admin' ? 'NGO Coordinator' : loginRole === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'}.`, 'success');
-                // Redirect to respective tab
-                if (loginRole === 'admin') setActiveTab('dashboard');
-                else if (loginRole === 'donor') setActiveTab('donor');
-                else if (loginRole === 'patient') setActiveTab('patient');
-              }}
-            >
-              Sign In (Cognito Sandbox)
-            </button>
+                <div className="auth-input-group">
+                  <label className="auth-input-label">Username / Registered Contact</label>
+                  <input 
+                    type="text" 
+                    className="auth-input" 
+                    placeholder="Enter email or mobile number" 
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                  />
+                </div>
+                
+                <div className="auth-input-group">
+                  <label className="auth-input-label">Password</label>
+                  <input 
+                    type="password" 
+                    className="auth-input" 
+                    placeholder="••••••••" 
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                  />
+                </div>
+
+                <button 
+                  className="btn-login"
+                  onClick={() => {
+                    setIsLoggedIn(true);
+                    setUserRole(loginRole);
+                    setShowLoginModal(false);
+                    triggerNotification(`Successfully signed in as ${loginRole === 'admin' ? 'NGO Coordinator' : loginRole === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'}.`, 'success');
+                    if (loginRole === 'admin') setActiveTab('dashboard');
+                    else if (loginRole === 'donor') setActiveTab('donor');
+                    else if (loginRole === 'patient') setActiveTab('patient');
+                  }}
+                >
+                  Sign In (Cognito Sandbox)
+                </button>
+                <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '12px' }}>
+                  <a href="#" style={{ color: 'var(--primary)', fontWeight: 600 }} onClick={(e) => { e.preventDefault(); setIsRegisterMode(true); }}>
+                    Don't have an account? Register as Volunteer Donor
+                  </a>
+                </div>
+              </>
+            ) : (
+              <form onSubmit={handleDonorRegistration}>
+                <div className="auth-title" style={{ marginTop: '0' }}>Register New Donor</div>
+                <div className="auth-sub">Enter details to join the Blood Warriors network</div>
+
+                <div className="auth-input-group">
+                  <label className="auth-input-label">Full Name</label>
+                  <input 
+                    type="text" 
+                    className="auth-input" 
+                    placeholder="e.g. Rahul Sharma" 
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="auth-input-group">
+                  <label className="auth-input-label">Mobile Number (with +91)</label>
+                  <input 
+                    type="text" 
+                    className="auth-input" 
+                    placeholder="e.g. +91 9876543210" 
+                    value={regPhone}
+                    onChange={(e) => setRegPhone(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="auth-input-group">
+                    <label className="auth-input-label">Blood Group</label>
+                    <select 
+                      className="match-selector" 
+                      value={regBloodGroup}
+                      onChange={(e) => setRegBloodGroup(e.target.value)}
+                    >
+                      <option value="O Positive">O Positive (O+)</option>
+                      <option value="O Negative">O Negative (O-)</option>
+                      <option value="A Positive">A Positive (A+)</option>
+                      <option value="A Negative">A Negative (A-)</option>
+                      <option value="B Positive">B Positive (B+)</option>
+                      <option value="B Negative">B Negative (B-)</option>
+                      <option value="AB Positive">AB Positive (AB+)</option>
+                      <option value="AB Negative">AB Negative (AB-)</option>
+                    </select>
+                  </div>
+
+                  <div className="auth-input-group">
+                    <label className="auth-input-label">Gender</label>
+                    <select 
+                      className="match-selector" 
+                      value={regGender}
+                      onChange={(e) => setRegGender(e.target.value)}
+                    >
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div className="auth-input-group">
+                    <label className="auth-input-label">Preferred Channel</label>
+                    <select 
+                      className="match-selector" 
+                      value={regChannel}
+                      onChange={(e) => setRegChannel(e.target.value)}
+                    >
+                      <option value="WhatsApp">WhatsApp</option>
+                      <option value="SMS">SMS</option>
+                      <option value="Email">Email</option>
+                    </select>
+                  </div>
+
+                  <div className="auth-input-group">
+                    <label className="auth-input-label">Preferred Language</label>
+                    <select 
+                      className="match-selector" 
+                      value={regLanguage}
+                      onChange={(e) => setRegLanguage(e.target.value)}
+                    >
+                      <option value="English">English</option>
+                      <option value="Hindi">Hindi</option>
+                      <option value="Telugu">Telugu</option>
+                      <option value="Tamil">Tamil</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="auth-input-group" style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px', background: 'var(--surface2)', padding: '10px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <input 
+                    type="checkbox" 
+                    id="joinBridgeCheck"
+                    checked={regJoinBridge}
+                    onChange={(e) => setRegJoinBridge(e.target.checked)}
+                    style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                  />
+                  <label htmlFor="joinBridgeCheck" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    Join a Patient Bridge? (Yes / No)
+                    <span style={{ display: 'block', fontSize: '10px', color: 'var(--muted)', fontWeight: 'normal', marginTop: '2px' }}>
+                      Allocates you to a matched child needing rotating transfusions. If No, you will be notified only during emergencies.
+                    </span>
+                  </label>
+                </div>
+
+                <button type="submit" className="btn-login" style={{ marginTop: '1.25rem' }}>
+                  Register and Sign In
+                </button>
+                
+                <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '12px' }}>
+                  <a href="#" style={{ color: 'var(--primary)', fontWeight: 600 }} onClick={(e) => { e.preventDefault(); setIsRegisterMode(false); }}>
+                    Already have an account? Sign In
+                  </a>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import hashlib
 from datetime import datetime
+import joblib
 from sqlalchemy.orm import Session
 from .database import engine, SessionLocal, Base
 from .models import User, Bridge, BridgeDonorLink
@@ -31,6 +32,26 @@ LAST_NAMES = [
 
 REGIONAL_LANGUAGES = ["Hindi", "Telugu", "Tamil", "Bengali", "Marathi", "Kannada", "Malayalam", "Gujarati"]
 CHANNELS = ["WhatsApp", "SMS", "Email"]
+
+# Load models setup
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CHURN_MODEL_PATH = os.path.join(SCRIPT_DIR, "churn_model.joblib")
+RESPONSIVENESS_MODEL_PATH = os.path.join(SCRIPT_DIR, "responsiveness_model.joblib")
+
+_churn_model = None
+_responsiveness_model = None
+
+def get_ml_models():
+    global _churn_model, _responsiveness_model
+    if _churn_model is None or _responsiveness_model is None:
+        try:
+            if os.path.exists(CHURN_MODEL_PATH) and os.path.exists(RESPONSIVENESS_MODEL_PATH):
+                _churn_model = joblib.load(CHURN_MODEL_PATH)
+                _responsiveness_model = joblib.load(RESPONSIVENESS_MODEL_PATH)
+                print("Successfully loaded local ML models in seeder!")
+        except Exception as e:
+            print(f"Error loading local ML models in seeder: {e}")
+    return _churn_model, _responsiveness_model
 
 def get_deterministic_int(string_seed: str, max_val: int) -> int:
     """Returns a deterministic integer between 0 and max_val-1 using SHA-256."""
@@ -92,11 +113,81 @@ def clean_int(val):
     except ValueError:
         return None
 
+def extract_features(row):
+    # 1. Gender encoding
+    g = clean_value(row.get('gender'))
+    gender_encoded = 0
+    if g:
+        g_str = str(g).strip().lower()
+        if g_str == "male":
+            gender_encoded = 1
+        elif g_str == "female":
+            gender_encoded = 2
+            
+    # 2. Blood group encoding
+    bg_list = ["O Positive", "O Negative", "A Positive", "A Negative", "B Positive", "B Negative", "AB Positive", "AB Negative"]
+    bg_map = {bg: idx + 1 for idx, bg in enumerate(bg_list)}
+    bg = clean_value(row.get('blood_group'))
+    blood_group_encoded = bg_map.get(bg, 0)
+    
+    # 3. Donor Type encoding
+    dt = clean_value(row.get('donor_type'))
+    donor_type_encoded = 0
+    if dt:
+        dt_str = str(dt).strip().lower()
+        if "regular" in dt_str:
+            donor_type_encoded = 2
+        elif "one-time" in dt_str or "one time" in dt_str:
+            donor_type_encoded = 1
+            
+    # 4. Eligibility status
+    elig = clean_value(row.get('eligibility_status'))
+    eligibility_encoded = 1 if str(elig).strip().lower() == "eligible" else 0
+    
+    # 5. Recency calculation
+    last_donation = clean_value(row.get('last_donation_date'))
+    recency_days = 9999.0
+    if last_donation:
+        try:
+            ld_dt = datetime.strptime(str(last_donation).split()[0], "%Y-%m-%d")
+            current_dt = datetime(2025, 8, 31)
+            days = (current_dt - ld_dt).days
+            recency_days = float(max(0, days))
+        except Exception:
+            pass
+            
+    # 6. Basic numeric features
+    donations = clean_float(row.get('donations_till_date')) or 0.0
+    total_calls = clean_int(row.get('total_calls')) or 0
+    calls_ratio = clean_float(row.get('calls_to_donations_ratio')) or 0.0
+    cycle = clean_int(row.get('cycle_of_donations')) or 90
+    
+    return [
+        gender_encoded,
+        blood_group_encoded,
+        donor_type_encoded,
+        eligibility_encoded,
+        recency_days,
+        donations,
+        total_calls,
+        calls_ratio,
+        cycle
+    ]
+
 def calculate_health_score(row) -> float:
     """
-    Computes a donor health score between 0.0 and 1.0 based on columns.
-    Health Score = 0.3 * donations_till_date + 0.25 * (1 - ratio) + 0.2 * recency + 0.15 * eligibility + 0.1 * profile
+    Computes a donor health score between 0.0 and 1.0 using local ML or heuristic fallback.
     """
+    # Try local ML prediction
+    churn_m, resp_m = get_ml_models()
+    if resp_m is not None:
+        try:
+            features = [extract_features(row)]
+            score = float(resp_m.predict(features)[0])
+            return float(round(max(0.0, min(1.0, score)), 2))
+        except Exception as e:
+            print(f"Error predicting responsiveness score: {e}")
+
     # 1. Donations score (normalized, capped at 10 donations)
     donations = clean_float(row.get('donations_till_date')) or 0.0
     donations_score = min(donations / 10.0, 1.0)
@@ -123,10 +214,6 @@ def calculate_health_score(row) -> float:
             if days <= 0:
                 recency_score = 1.0
             else:
-                # Closer to last donation -> higher recency score, but need rotation.
-                # Actually, standard donation cycle is 90 days. Ideal recency is 90+ days.
-                # So if days > 90, higher score is good. Let's make a simple curve:
-                # if donor is eligible (days > 90), score decreases the longer they haven't donated.
                 recency_score = max(0.0, 1.0 - (days / 730.0)) # decays over 2 years
         except Exception:
             recency_score = 0.5
@@ -154,18 +241,28 @@ def calculate_health_score(row) -> float:
 
 def calculate_churn_risk(row) -> float:
     """
-    Computes a churn risk score between 0.0 and 1.0.
+    Computes a churn risk score between 0.0 and 1.0 using local ML or heuristic fallback.
     """
+    # Active/Inactive is a deterministic state, but if Active, predict churn risk probability
     active_status = clean_value(row.get('user_donation_active_status'))
-    ratio = clean_float(row.get('calls_to_donations_ratio')) or 0.0
-    total_calls = clean_int(row.get('total_calls')) or 0
-    donations = clean_float(row.get('donations_till_date')) or 0.0
-    
     if active_status == "Inactive":
         return 1.0
+
+    # Try local ML prediction
+    churn_m, resp_m = get_ml_models()
+    if churn_m is not None:
+        try:
+            features = [extract_features(row)]
+            prob = float(churn_m.predict_proba(features)[0][1])  # Class 1: churned
+            return float(round(max(0.0, min(1.0, prob)), 2))
+        except Exception as e:
+            print(f"Error predicting churn risk: {e}")
         
     risk = 0.0
     # High call-to-donation ratio indicates donor burnout
+    ratio = clean_float(row.get('calls_to_donations_ratio')) or 0.0
+    total_calls = clean_int(row.get('total_calls')) or 0
+    donations = clean_float(row.get('donations_till_date')) or 0.0
     if ratio > 5.0:
         risk += 0.4
     if ratio > 15.0:

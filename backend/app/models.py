@@ -125,3 +125,19 @@ class OutreachEvent(Base):
     # Relationships
     request = relationship("Request", back_populates="outreach_events")
     donor = relationship("User", back_populates="outreach_events")
+
+class ChatHistory(Base):
+    __tablename__ = "chat_history"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    phone = Column(String, index=True)
+    sender = Column(String)  # 'user' or 'bot'
+    message = Column(String)
+    timestamp = Column(String)
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    phone = Column(String, unique=True, index=True)
+    step = Column(String, nullable=True)  # 'reg_name', 'reg_blood', 'reg_gender', 'reg_channel', 'reg_lang', 'reg_bridge'
+    temp_data = Column(String, nullable=True)  # JSON string
+

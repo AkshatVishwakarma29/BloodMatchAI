@@ -224,73 +224,86 @@ donor_features = [
 
 ## Pillar 2: Agentic Outreach Orchestration
 
-### Replacing Manual WhatsApp Coordination
+### 1. Donor Registration & Patient Bridge Allocation
 
-**AWS Step Functions** orchestrates the entire outreach workflow autonomously:
+To optimize donor engagement and balance the load across the volunteer network, the platform supports two registration modes:
+* **Emergency Donor**: Registered as a general pool backup donor. They are not assigned to a specific patient bridge and are only contacted during global emergency wave escalations.
+* **Bridge Donor**: Registered to support a specific patient's regular transfusion cycle.
+  * **Smart Allocation**: Automatically allocated to an active patient bridge requiring compatible blood type. To ensure even coverage, the allocator prioritizes bridges with the greatest donor deficit (fewest assigned donors).
+  * **10-Donor Cap**: To protect donor rotation cadences and prevent over-concentration, each patient bridge is strictly capped at a maximum of **10 donors**. If a compatible bridge is full, the donor is assigned to another compatible bridge or remains unassigned in the general emergency pool.
+
+### 2. Autonomous Outreach Workflows
+
+The platform supports two visual event-driven orchestration workflows (simulating AWS Step Functions):
+
+#### A. Direct Emergency Request Orchestration (Wave-based)
+Used for sudden, unscheduled hospital emergency requests:
+1. **Verification**: Validate request context and patient blood compatibility requirements.
+2. **Global Ranking**: Query and rank compatible active donors using ML predicted responsiveness, distance, and gender preferences.
+3. **Sequential Waves (Waves of 3)**: Contact top 3 ranked donors via their preferred channel. If no confirmation after wave timeout (demo: 15s), move to the next 3 ranked donors.
+4. **Coordinator Alert**: Escalated if 3 waves (9 donors total) time out without confirmation.
+
+#### B. Scheduled Transfusion Check & Escalation (Two-Stage Workflow)
+Triggered 3 days prior to a patient's expected transfusion date (`expected_next_transfusion_date` from the dataset):
 
 ```
-Transfusion Request Received
-          │
-          ▼
-[Lambda] Validate request & patient record
-          │
-          ▼
-[Matching API] Rank top donors for this request
-          │
-          ▼
-[Lambda] Outreach Wave 1: Contact top 3 donors via preferred channel
-          │
-    ┌─────▼──────┐
-    │ Wait 4 hrs  │ ← EventBridge schedule
-    └─────┬───────┘
-          │
-    [Lambda] Check responses via DynamoDB
-          │
-    ┌─────▼──────────────────────┐
-    │ Sufficient donors confirmed? │
-    └───┬────────────────────────┘
-        │ No                 │ Yes
-        ▼                    ▼
-[Move to next         [Confirm & notify patient]
- ranked donors]
-        │
-   Still not enough?
-   + rare blood type?
-   + <48 hrs to need?
-        │
-        ▼
-[Coordinator Alert]
-  Human decides next action
-  Notify Blood Bank for backup
+                       Transfusion Check (T-3 Days)
+                                     │
+                                     ▼
+                    ┌─────────────────────────────────┐
+                    │     Stage 1: Bridge Outreach    │
+                    │ Contact all eligible bridge members│
+                    └────────────────┬────────────────┘
+                                     │
+                             ┌───────┴───────┐
+                     Pending │               │ Confirmed
+                             ▼               ▼
+                 ┌───────────────────────┐ ┌───────────────────┐
+                 │ Stage 2: Global Fall  │ │ Generate Secure   │
+                 │   Emergency Waves     │ │ Transaction Token │
+                 └───────────┬───────────┘ └───────────────────┘
+                             │
+                      ┌──────┴──────┐
+              Pending │             │ Confirmed
+                      ▼             ▼
+          ┌─────────────────────┐ ┌───────────────────┐
+          │  Wave 1: Top 10     │ │ Generate Secure   │
+          │ global active donors│ │ Transaction Token │
+          └───────────┬─────────┘ └───────────────────┘
+                      │
+               ┌──────┴──────┐
+       Pending │             │ Confirmed
+               ▼             ▼
+   ┌─────────────────────┐ ┌───────────────────┐
+   │  Wave 2: Next 15    │ │ Generate Secure   │
+   │ global active donors│ │ Transaction Token │
+   └───────────┬─────────┘ └───────────────────┘
+               │
+        ┌──────┴──────┐
+Pending │             │ Confirmed
+        ▼             ▼
+┌──────────────────┐ ┌───────────────────┐
+│Coordinator Alert │ │ Generate Secure   │
+│   Escalation     │ │ Transaction Token │
+└──────────────────┘ └───────────────────┘
 ```
 
-**Communication Strategy: Single Channel + Sequential Escalation**
+1. **Stage 1 (Bridge Alerts)**: Simultaneously contact all eligible active donors assigned to the patient's bridge.
+2. **Stage 2 (Emergency Fallback)**: If no bridge donor accepts within the timeout (demo: 15s), query and rank global compatible donors who are *not* part of this patient's bridge:
+   * **Wave 1**: Alert top 10 ranked global donors.
+   * **Wave 2**: Alert next 15 ranked global donors (using `25 + len(bridge_donor_ids)` query limits to ensure a complete wave of 15 candidate donors after filtering out existing bridge members).
+3. **Escalation**: Alert NGO coordinator for manual outreach or blood bank backup if all waves time out.
+
+### 3. Communication Strategy: Single Channel + Sequential Escalation
 
 > [!IMPORTANT]
 > Donors are **never** contacted on multiple channels simultaneously. The dataset's worst-case `calls_to_donations_ratio` of **23.0** is evidence that over-contacting donors destroys engagement. The AI's job is **smarter targeting, not more channels**.
 
 **Channel Priority Ladder** (one step at a time, never simultaneous):
-
-```
-Step 1 — Contact via donor's PREFERRED CHANNEL only
-         (set during registration: WhatsApp / SMS / Email)
-              │
-              │  No response after 4 hours
-              ▼
-Step 2 — Try donor's SECONDARY CHANNEL (if configured)
-              │
-              │  Still no response
-              ▼
-Step 3 — Move to the NEXT RANKED donor
-         (do NOT escalate channels further for routine requests)
-              │
-              │  ONLY if: rare blood type (O-Neg/AB-Neg)
-              │           AND fewer than 2 eligible donors found
-              │           AND patient needs blood within 48 hours
-              ▼
-Step 4 — Coordinator alert (human makes the call decision)
-         Voice/Amazon Connect — NEVER automated for first contact
-```
+1. **Step 1**: Contact via donor's PREFERRED CHANNEL only (set during registration: WhatsApp / SMS / Email).
+2. **Step 2**: Try donor's SECONDARY CHANNEL (if configured) if no response after timeout.
+3. **Step 3**: Move to the NEXT RANKED donor (do NOT escalate channels further for routine requests).
+4. **Step 4**: Coordinator alert (voice/Amazon Connect) — human makes the call decision (NEVER automated for first contact).
 
 **Available Channel Infrastructure** (used per donor preference):
 - **WhatsApp**: Via **Twilio WhatsApp Sandbox** → Twilio webhook → API Gateway → Lambda → Step Functions
@@ -319,36 +332,47 @@ Step 4 — Coordinator alert (human makes the call decision)
 
 ---
 
-## Pillar 3: Conversational AI ("Veeru 2.0")
+## Pillar 3: Conversational AI ("Veeru 2.0") Technical Implementation Plan
 
-### Current State
-Blood Warriors already has "Veeru" — a basic WhatsApp bot. We upgrade it with memory, context, and agentic capabilities.
+### Goal Description
+We are upgrading the Conversational AI bot ("Veeru 2.0") from a basic keyword classifier to an agentic chatbot featuring conversation session memory, multi-lingual adaptive responses, and database transaction handlers for advanced intents (donor registration, rescheduling, availability snoozes, and blood bank lookup).
 
-### Veeru 2.0 Architecture
-```
-Donor/Patient WhatsApp → AWS Lex → Lambda → Amazon Bedrock (Claude Haiku)
-                                      │
-                              ┌───────▼──────────┐
-                              │  Memory Store     │
-                              │  (DynamoDB)       │
-                              │  - Past donations │
-                              │  - Preferences    │
-                              │  - Last interaction│
-                              └───────────────────┘
-```
+## User Review Required
+> [!IMPORTANT]
+> **LLM Usage Cost**: The chatbot will leverage Gemini (`gemini-1.5-flash`) with fallback to OpenAI (`gpt-4o-mini`). Local runs require a `GEMINI_API_KEY` or `OPENAI_API_KEY` in the `.env` file. If neither key is provided, the bot will fall back to an enhanced rule-based state machine.
+>
+> **Anonymity Policies**: All chatbot responses will continue to enforce the strict **Double-Blind Anonymity** rules. Even if the LLM attempts to answer queries about patient names or donor phones, the bot's validation layer will intercept and mask these details.
 
-**Capabilities**:
-- **Donors**: Check eligibility status, confirm/decline donation requests, reschedule, update availability
-- **Patients**: Check upcoming transfusion schedule, status of current request, nearest blood bank
-- **Adaptive Language**: Responds in Hindi, English, or regional language based on user preference (Bedrock + Translate)
-- **Contextual Memory**: Remembers past interactions — "Last time you donated on March 15. You're eligible again now!"
-- **Proactive Nudges**: Sends check-ins when donors haven't engaged in 30 days
+## Open Questions
+> [!WARNING]
+> **Registration details parsing**: Should we implement a structured slot-filling dialogue (asking one question at a time: "What is your name?", "What is your blood group?", etc.) or use the LLM to parse all details from a single natural language sentence (e.g. "My name is Raj, B positive, male, register me please")?
+>
+> **Rescheduling policy**: When a donor says "I want to reschedule", how many days should we postpone by default if they don't specify a date? (We propose 7 days).
 
-**Amazon Lex Intents**:
-- `ConfirmDonation`, `DeclineDonation`, `RescheduleDonation`
-- `CheckEligibility`, `UpdateAvailability`, `GetDonationHistory`
-- `PatientRequestStatus`, `FindNearestBloodBank`
-- `RegisterDonor`, `UpdateContactInfo`
+## Proposed Changes
+
+### Database Layer
+#### [MODIFY] [models.py](file:///c:/Sami/studies/BLEND360%20hackathon'26/bloodmatchai/backend/app/models.py)
+* Add a `ChatHistory` table to persist session messages:
+  ```python
+  class ChatHistory(Base):
+      __tablename__ = "chat_history"
+      id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+      phone = Column(String, index=True)
+      sender = Column(String)  # 'user' or 'bot'
+      message = Column(String)
+      timestamp = Column(String)
+  ```
+
+### Chatbot Logic Layer
+#### [MODIFY] [chatbot.py](file:///c:/Sami/studies/BLEND360%20hackathon'26/bloodmatchai/backend/app/chatbot.py)
+* **Session Memory**: Retrieve the last 8 messages from `ChatHistory` for the user's phone, formatting it into the system context for the LLM. Save incoming user messages and generated replies.
+* **Intents Handling**:
+  * **RegisterDonor**: Parse name, blood group, gender, preferred language/channel from chat, and call backend registration logic.
+  * **RescheduleDonation**: Postpone a pending confirmed outreach event's transfusion cycle (updating the request or logging a rescheduled event).
+  * **UpdateAvailability**: Allow snooze commands (e.g., "snooze 15 days") to update `next_eligible_date` and `eligibility_status`.
+  * **FindNearestBloodBank**: Calculate distances to major Hyderabad centers (Aarohi, NTR Trust, Gandhi Hospital, etc.) and list the top 3 closest compatible sites.
+* **Adaptive Language Translation**: Format hardcoded response messages in the user's preferred language (`Hindi`, `Telugu`, `Tamil`, `English`) and instruct the LLM to reply in the detected language.
 
 ---
 

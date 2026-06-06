@@ -114,3 +114,13 @@ class ChatMessageResponse(BaseModel):
 class TokenVerify(BaseModel):
     token: str
 
+class DonorRegister(BaseModel):
+    name: str
+    phone: str
+    blood_group: str
+    gender: str
+    preferred_channel: str = "WhatsApp"
+    preferred_language: str = "English"
+    join_bridge: bool = True
+
+
