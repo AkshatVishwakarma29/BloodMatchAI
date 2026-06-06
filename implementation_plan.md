@@ -374,6 +374,15 @@ We are upgrading the Conversational AI bot ("Veeru 2.0") from a basic keyword cl
   * **FindNearestBloodBank**: Calculate distances to major Hyderabad centers (Aarohi, NTR Trust, Gandhi Hospital, etc.) and list the top 3 closest compatible sites.
 * **Adaptive Language Translation**: Format hardcoded response messages in the user's preferred language (`Hindi`, `Telugu`, `Tamil`, `English`) and instruct the LLM to reply in the detected language.
 
+### Awareness Sharing & Certificates Layer
+#### [MODIFY] [main.py](file:///c:/Sami/studies/BLEND360%20hackathon%2726/bloodmatchai/backend/app/main.py)
+* **Token Verification & Notification**: Modify the `/api/outreach/verify-token` endpoint. Upon successful token verification, generate a mock Certificate link (`https://bloodmatchai.org/certificates/{token}`) and dispatch a notification to the donor's preferred contact channel. Log this event to `notifications.log` for real-time visualization on the coordinator panel.
+
+#### [MODIFY] [App.jsx](file:///c:/Sami/studies/BLEND360%20hackathon%2726/bloodmatchai/frontend/src/App.jsx)
+* **Certificate Modal**: Add a modal overlay in React to render a beautifully formatted Certificate of Appreciation, displaying the donor's name, blood group, unique transactional token, and official gratitude text.
+* **Awareness Sharing Integration**: Add direct social media sharing links (WhatsApp API and LinkedIn sharing portal) with pre-coded viral messages (e.g., *"I just saved a life by donating blood through BloodMatchAI!..."*) so that donors can easily share their contribution on their stories.
+* **Donor Dashboard Integration**: Render the certificate list dynamically on the Donor Lifeline Dashboard for any donor who has completed one or more donations.
+
 ---
 
 ## Pillar 4: Admin Dashboard & Analytics

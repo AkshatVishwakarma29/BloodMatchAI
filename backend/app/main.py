@@ -180,6 +180,10 @@ def verify_donation_token(payload: schemas.TokenVerify, db: Session = Depends(ge
         f"✅ TOKEN VERIFIED: Token {payload.token} verified successfully at hospital. "
         f"Donor [Masked: {donor.masked_name}] (Blood group: {donor.blood_group}) donated for Request ID {event.request_id}."
     )
+    outreach.log_notification(
+        f"📜 CERTIFICATE DISPATCHED: Certificate of Appreciation generated for {donor.name} (Token: {payload.token}). "
+        f"Alert sent via {donor.preferred_channel} with link: https://bloodmatchai.org/certificates/{payload.token} to raise community awareness."
+    )
 
     return {
         "status": "success",
@@ -335,6 +339,90 @@ def register_donor(payload: schemas.DonorRegister, db: Session = Depends(get_db)
     )
     
     return new_donor
+
+
+@app.post("/api/patients/register", response_model=schemas.UserResponse)
+def register_patient(payload: schemas.PatientRegister, db: Session = Depends(get_db)):
+    import random
+    import datetime
+    
+    # Check if patient already exists
+    existing = db.query(User).filter(User.phone == payload.phone).first()
+    if existing and existing.role != "Guest":
+        raise HTTPException(status_code=400, detail="Phone number is already registered.")
+        
+    user_id = existing.id if (existing and existing.role == "Guest") else f"patient_{hash(payload.phone) & 0xffffffff:x}"
+    
+    # Random offset around Hyderabad (17.39, 78.46) for coordinates to display on map
+    lat_offset = random.uniform(-0.06, 0.06)
+    lon_offset = random.uniform(-0.06, 0.06)
+    lat = 17.39 + lat_offset
+    lon = 78.46 + lon_offset
+    
+    if existing and existing.role == "Guest":
+        existing.name = payload.name
+        existing.role = "Patient"
+        existing.role_status = True
+        existing.blood_group = payload.blood_group
+        existing.gender = payload.gender
+        existing.latitude = lat
+        existing.longitude = lon
+        existing.registration_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        existing.preferred_channel = payload.preferred_channel
+        existing.preferred_language = payload.preferred_language
+        new_patient = existing
+    else:
+        new_patient = User(
+            id=user_id,
+            name=payload.name,
+            phone=payload.phone,
+            role="Patient",
+            role_status=True,
+            blood_group=payload.blood_group,
+            gender=payload.gender,
+            latitude=lat,
+            longitude=lon,
+            registration_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            preferred_channel=payload.preferred_channel,
+            preferred_language=payload.preferred_language
+        )
+        db.add(new_patient)
+    db.commit()
+    db.refresh(new_patient)
+    
+    # If they want to become a bridge (join_bridge = True), create a Bridge record!
+    if payload.join_bridge:
+        existing_bridge = db.query(Bridge).filter(Bridge.patient_id == new_patient.id).first()
+        if not existing_bridge:
+            bridge_id = f"bridge_{hash(new_patient.id) & 0xffffffff:x}"
+            new_bridge = Bridge(
+                id=bridge_id,
+                patient_id=new_patient.id,
+                bridge_status=True,
+                bridge_gender=new_patient.gender,
+                bridge_blood_group=new_patient.blood_group,
+                quantity_required=1.0,
+                frequency_in_days=21,
+                status_of_bridge=True,
+                expected_next_transfusion_date=(datetime.date.today() + datetime.timedelta(days=21)).strftime("%Y-%m-%d")
+            )
+            db.add(new_bridge)
+            db.commit()
+            
+            # Log notification to outreach console
+            outreach.log_notification(
+                f"📝 NEW PATIENT BRIDGE CREATED: Patient [Masked: {new_patient.masked_name}] created a dedicated blood bridge. "
+                f"Needs compatible {new_patient.blood_group} blood."
+            )
+            
+    # Log patient registration
+    outreach.log_notification(
+        f"📝 NEW PATIENT REGISTERED: {payload.name} ({payload.blood_group})."
+        f"{' Joined Patient Bridge.' if payload.join_bridge else ''}"
+    )
+    
+    return new_patient
+
 
 
 @app.post("/api/outreach/trigger-schedule-check")

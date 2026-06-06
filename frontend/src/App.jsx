@@ -36,12 +36,114 @@ function haversine(lat1, lon1, lat2, lon2) {
 
 const API_BASE_URL = 'http://127.0.0.1:8000';
 
+function getBadgeShareUrl(badgeName, platform) {
+  const messages = {
+    'First Drop Badge': {
+      whatsapp: "I am proud to share that I just unlocked the 'First Drop Badge' on BloodMatchAI! 🩸 I completed my first voluntary blood donation to support children with Thalassemia under the Blood Warriors network. Join us: https://bloodwarriors.in",
+      linkedin: "Proud to share that I've unlocked the 'First Drop Badge' on BloodMatchAI for completing my first voluntary blood donation to support Thalassemia patients with Blood Warriors! 🩸 Let's make India Thalassemia-free. Join the movement: https://bloodwarriors.in"
+    },
+    'Bridge Anchor': {
+      whatsapp: "Hey! I just unlocked the 'Bridge Anchor' badge on BloodMatchAI for supporting thalassemia patients with regular blood donations! 🩸 Caring is sharing. Join Blood Warriors: https://bloodwarriors.in",
+      linkedin: "Honored to receive the 'Bridge Anchor' badge on BloodMatchAI for regular blood donation contributions supporting Thalassemia children under the Blood Warriors network! 🩸 Regular blood matches save lives. Learn more: https://bloodwarriors.in"
+    },
+    'Rare Guardian': {
+      whatsapp: "I just unlocked the 'Rare Guardian' badge on BloodMatchAI for supporting rare blood type shortage alerts! 🩸 Saving lives, one drop at a time. Help out: https://bloodwarriors.in",
+      linkedin: "So proud to receive the 'Rare Guardian' badge on BloodMatchAI! By donating compatible rare blood types, we are preventing critical shortages for Thalassemia patients. Let's raise awareness: https://bloodwarriors.in"
+    },
+    'Community Shield': {
+      whatsapp: "We did it! I unlocked the collaborative 'Community Shield' badge with the Hyderabad Chapter on BloodMatchAI by saving Thalassemia fighters! 🩸 Join the team: https://bloodwarriors.in",
+      linkedin: "Thrilled to announce that I and the Hyderabad Chapter have unlocked the collaborative 'Community Shield' badge on BloodMatchAI! Working together, we met our monthly donation targets to keep blood bridges fully stocked. https://bloodwarriors.in"
+    }
+  };
+
+  const text = messages[badgeName] && messages[badgeName][platform] ? messages[badgeName][platform] : "";
+  if (platform === 'whatsapp') {
+    return "https://api.whatsapp.com/send?text=" + encodeURIComponent(text);
+  } else if (platform === 'linkedin') {
+    return "https://www.linkedin.com/feed/?shareActive=true&text=" + encodeURIComponent(text);
+  }
+  return "";
+}
+
+function getCertificateShareUrl(token, platform) {
+  const text = platform === 'whatsapp' 
+    ? "Hey! I just saved a life by donating blood through BloodMatchAI! 🩸 Check out my Certificate of Appreciation: https://bloodmatchai.org/certificates/" + token + " - Let's make India Thalassemia-free together! @BloodWarriors"
+    : "I'm incredibly proud to share that I just saved a life by donating blood through BloodMatchAI! 🩸 Here is my verified Certificate of Appreciation (Token: " + token + "). Let's work together to make India Thalassemia-free! #BloodWarriors #SaveALife #BloodMatchAI";
+  
+  if (platform === 'whatsapp') {
+    return "https://api.whatsapp.com/send?text=" + encodeURIComponent(text);
+  } else if (platform === 'linkedin') {
+    return "https://www.linkedin.com/feed/?shareActive=true&text=" + encodeURIComponent(text);
+  }
+  return "";
+}
+
+function downloadCertificateAsPDF(cert) {
+  // Create a hidden iframe
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'absolute';
+  iframe.style.width = '0px';
+  iframe.style.height = '0px';
+  iframe.style.border = 'none';
+  document.body.appendChild(iframe);
+  
+  const doc = iframe.contentWindow.document;
+  doc.open();
+  doc.write('<html><head><title>Certificate of Appreciation - ' + cert.token + '</title><style>@page { size: A5 landscape; margin: 0; } body { margin: 0; padding: 25px; font-family: "Georgia", serif; background: #fcfbf7; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .cert-container { border: 8px double #d4af37; border-radius: 8px; padding: 2.5rem 1.5rem; text-align: center; color: #333; box-sizing: border-box; height: calc(100vh - 50px); display: flex; flex-direction: column; justify-content: space-between; } .ribbon { font-size: 2.5rem; color: #c0002e; margin-bottom: 0.5rem; } .title { font-size: 1.75rem; font-weight: bold; color: #8b0000; text-transform: uppercase; letter-spacing: 3px; margin: 0 0 1rem; } .present { font-size: 14px; font-style: italic; color: #555; margin: 0 0 0.5rem; } .name { font-size: 2.25rem; font-weight: bold; color: #111; border-bottom: 2px solid #d4af37; display: inline-block; padding-bottom: 4px; margin: 0 0 1.25rem; } .description { font-size: 13px; line-height: 1.8; color: #444; margin: 0 auto 1.5rem; max-width: 480px; } .footer { display: flex; justify-content: space-between; align-items: center; border-top: 1px dashed #ccc; padding-top: 1rem; } .footer-left { text-align: left; } .footer-right { text-align: right; } .token-label { font-family: monospace; font-size: 10px; color: #888; } .secure-label { font-size: 11px; font-weight: bold; color: #555; margin-top: 4px; } .seal-label { font-size: 18px; font-family: Georgia, serif; font-style: italic; color: #8b0000; } .network-label { font-size: 11px; color: #555; font-weight: bold; margin-top: 4px; }</style></head><body><div class="cert-container"><div class="ribbon">🎗️</div><div class="title">Certificate of Appreciation</div><div class="present">This is proudly presented to</div><div class="name">' + cert.donorName + '</div><div class="description">For their selfless and noble contribution of voluntary blood donation (Blood Group: <b>' + cert.bloodGroup + '</b>, Transaction Token: <b>' + cert.token + '</b>) on <b>' + cert.date + '</b>, successfully securing a patient\'s Thalassemia transfusion bridge. Your act of compassion has directly saved a life.</div><div class="footer"><div class="footer-left"><div class="token-label">TOKEN: ' + cert.token + '</div><div class="secure-label">VERIFIED SECURE</div></div><div class="footer-right"><div class="seal-label">Blood Warriors</div><div class="network-label">OFFICIAL NETWORK SEAL</div></div></div></div><script>window.onload = function() { window.print(); setTimeout(function() { window.frameElement.remove(); }, 100); }</script></body></html>');
+  doc.close();
+}
+
 export default function App() {
   const [stats, setStats] = useState(mockStats);
   const [patients, setPatients] = useState(mockPatients);
   const [donors, setDonors] = useState(mockDonors);
   const [guests, setGuests] = useState(mockGuests);
   const [notificationLogs, setNotificationLogs] = useState([]);
+  const [showCertificateModal, setShowCertificateModal] = useState(false);
+  const [selectedCertificate, setSelectedCertificate] = useState(null);
+  
+  const [showEmergencyRequestModal, setShowEmergencyRequestModal] = useState(false);
+  const [regRole, setRegRole] = useState('donor');
+  
+  // Emergency request form states
+  const [emGender, setEmGender] = useState('Male');
+  const [emAge, setEmAge] = useState('');
+  const [emBloodGroup, setEmBloodGroup] = useState('O Positive');
+  const [emHospital, setEmHospital] = useState('');
+  const [emUnits, setEmUnits] = useState(2);
+  const [emDate, setEmDate] = useState('');
+  const [emContact, setEmContact] = useState('');
+
+  // Local emergency requests matching patient anonymity and gender visible
+  const [localEmergencyRequests, setLocalEmergencyRequests] = useState([
+    {
+      id: 'REQ-82A7',
+      patientName: 'Fighter #F-82A7 (Female)',
+      bloodGroup: 'A Positive',
+      quantity: 4,
+      date: '6 Jun 2026',
+      location: "Rainbow Children's Hospital, Banjara Hills, Hyderabad",
+      status: 'URGENT'
+    },
+    {
+      id: 'REQ-41F6',
+      patientName: 'Fighter #F-41F6 (Male)',
+      bloodGroup: 'O Negative',
+      quantity: 2,
+      date: '7 Jun 2026',
+      location: 'Aarohi Blood Center, Madhapur, Hyderabad',
+      status: 'URGENT'
+    },
+    {
+      id: 'REQ-366F',
+      patientName: 'Fighter #F-366F (Female)',
+      bloodGroup: 'B Positive',
+      quantity: 2,
+      date: '9 Jun 2026',
+      location: 'Tapadia Diagnostics, Secunderabad, Hyderabad',
+      status: 'NORMAL'
+    }
+  ]);
 
   // Registration form states
   const [isRegisterMode, setIsRegisterMode] = useState(false);
@@ -201,7 +303,8 @@ export default function App() {
             healthScore: d.health_score || 0.0,
             churnRisk: d.churn_risk_score || 0.0,
             preferredChannel: d.preferred_channel || 'WhatsApp',
-            inactiveComment: d.inactive_trigger_comment
+            inactiveComment: d.inactive_trigger_comment,
+            lastDonationDate: d.last_donation_date || d.lastDonation || ""
           }));
           setDonors(mappedDonors);
         }
@@ -497,7 +600,7 @@ export default function App() {
     }
   };
 
-  // Handle Donor Registration in Frontend
+  // Handle Donor & Patient Registration in Frontend
   const handleDonorRegistration = async (e) => {
     e.preventDefault();
     if (!regName.trim() || !regPhone.trim()) {
@@ -505,93 +608,212 @@ export default function App() {
       return;
     }
     
-    triggerNotification("Submitting registration to backend...", "info");
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/donors/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: regName.trim(),
-          phone: regPhone.trim(),
-          blood_group: regBloodGroup,
-          gender: regGender,
-          preferred_channel: regChannel,
-          preferred_language: regLanguage,
-          join_bridge: regJoinBridge
-        })
-      });
+    if (regRole === 'donor') {
+      triggerNotification("Submitting registration to backend...", "info");
       
-      const data = await response.json();
-      if (response.ok) {
-        triggerNotification(`Registration successful! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'}.`, 'success');
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/donors/register`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: regName.trim(),
+            phone: regPhone.trim(),
+            blood_group: regBloodGroup,
+            gender: regGender,
+            preferred_channel: regChannel,
+            preferred_language: regLanguage,
+            join_bridge: regJoinBridge
+          })
+        });
         
-        // Auto sign in as the registered donor
-        setIsLoggedIn(true);
-        setUserRole('donor');
-        setShowLoginModal(false);
-        setIsRegisterMode(false); // Reset to sign-in view
-        setActiveTab('donor');
-        
-        // Clear fields
-        setRegName('');
-        setRegPhone('');
-        
-        // Refresh donor list and stats from backend
-        const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
-        if (donorsRes.ok) {
-          const donorsData = await donorsRes.json();
-          const mappedDonors = donorsData.map(d => ({
-            userId: d.id,
-            name: d.name,
-            phone: d.phone,
-            bloodGroup: d.blood_group || 'O Positive',
-            gender: d.gender || 'Male',
-            lat: d.latitude || 17.39,
-            lon: d.longitude || 78.46,
-            donations: d.donations_till_date || 0,
-            callsRatio: d.calls_to_donations_ratio || 0.0,
-            eligibility: d.eligibility_status || 'eligible',
-            activeStatus: d.user_donation_active_status || 'Active',
-            donorType: d.role || 'Bridge Donor',
-            healthScore: d.health_score || 0.0,
-            churnRisk: d.churn_risk_score || 0.0,
-            preferredChannel: d.preferred_channel || 'WhatsApp',
-            inactiveComment: d.inactive_trigger_comment
-          }));
-          setDonors(mappedDonors);
+        const data = await response.json();
+        if (response.ok) {
+          triggerNotification(`Registration successful! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'}.`, 'success');
+          
+          // Auto sign in as the registered donor
+          setIsLoggedIn(true);
+          setUserRole('donor');
+          setLoginUsername(regPhone.trim());
+          setShowLoginModal(false);
+          setIsRegisterMode(false); // Reset to sign-in view
+          setActiveTab('donor');
+          
+          // Clear fields
+          setRegName('');
+          setRegPhone('');
+          
+          // Refresh donor list and stats from backend
+          const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
+          if (donorsRes.ok) {
+            const donorsData = await donorsRes.json();
+            const mappedDonors = donorsData.map(d => ({
+              userId: d.id,
+              name: d.name,
+              phone: d.phone,
+              bloodGroup: d.blood_group || 'O Positive',
+              gender: d.gender || 'Male',
+              lat: d.latitude || 17.39,
+              lon: d.longitude || 78.46,
+              donations: d.donations_till_date || 0,
+              callsRatio: d.calls_to_donations_ratio || 0.0,
+              eligibility: d.eligibility_status || 'eligible',
+              activeStatus: d.user_donation_active_status || 'Active',
+              donorType: d.role || 'Bridge Donor',
+              healthScore: d.health_score || 0.0,
+              churnRisk: d.churn_risk_score || 0.0,
+              preferredChannel: d.preferred_channel || 'WhatsApp',
+              inactiveComment: d.inactive_trigger_comment,
+              lastDonationDate: d.last_donation_date || d.lastDonation || ""
+            }));
+            setDonors(mappedDonors);
+          }
+          
+          const metricsRes = await fetch(`${API_BASE_URL}/api/dashboard/metrics`);
+          if (metricsRes.ok) {
+            const metricsData = await metricsRes.json();
+            setStats({
+              total: metricsData.total_users,
+              eligible: metricsData.total_users - metricsData.inactive_donors_count - metricsData.guest_count,
+              activeBridges: metricsData.active_bridges,
+              inactive: metricsData.inactive_donors_count,
+              guests: metricsData.guest_count,
+              avgCallsToDonationsRatio: metricsData.avg_calls_to_donations_ratio,
+              inactivityRate: metricsData.inactivity_rate,
+              rareBloodStock: metricsData.rare_blood_stock,
+              roleCounts: {
+                Guest: metricsData.guest_count,
+                "Emergency Donor": metricsData.emergency_donors_count,
+                "Bridge Donor": metricsData.bridge_donor_count || 2061,
+                Patient: metricsData.patient_count || 84,
+                Volunteer: metricsData.volunteer_count || 3
+              }
+            });
+          }
+        } else {
+          triggerNotification(data.detail || "Registration failed. Please try again.", "warning");
         }
-        
-        const metricsRes = await fetch(`${API_BASE_URL}/api/dashboard/metrics`);
-        if (metricsRes.ok) {
-          const metricsData = await metricsRes.json();
-          setStats({
-            total: metricsData.total_users,
-            eligible: metricsData.total_users - metricsData.inactive_donors_count - metricsData.guest_count,
-            activeBridges: metricsData.active_bridges,
-            inactive: metricsData.inactive_donors_count,
-            guests: metricsData.guest_count,
-            avgCallsToDonationsRatio: metricsData.avg_calls_to_donations_ratio,
-            inactivityRate: metricsData.inactivity_rate,
-            rareBloodStock: metricsData.rare_blood_stock,
-            roleCounts: {
-              Guest: metricsData.guest_count,
-              "Emergency Donor": metricsData.emergency_donors_count,
-              "Bridge Donor": metricsData.bridge_donor_count || 2061,
-              Patient: metricsData.patient_count || 84,
-              Volunteer: metricsData.volunteer_count || 3
-            }
-          });
-        }
-      } else {
-        triggerNotification(data.detail || "Registration failed. Please try again.", "warning");
+      } catch (err) {
+        console.error(err);
+        triggerNotification("Connection to backend registration failed.", "warning");
       }
-    } catch (err) {
-      console.error(err);
-      triggerNotification("Connection to backend registration failed.", "warning");
+    } else {
+      triggerNotification("Submitting patient registration to backend...", "info");
+      
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/patients/register`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: regName.trim(),
+            phone: regPhone.trim(),
+            blood_group: regBloodGroup,
+            gender: regGender,
+            preferred_channel: regChannel,
+            preferred_language: regLanguage,
+            join_bridge: regJoinBridge
+          })
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+          triggerNotification(`Registration successful! Registered as Thalassemia Patient.`, 'success');
+          
+          // Auto sign in as the registered patient
+          setIsLoggedIn(true);
+          setUserRole('patient');
+          setLoginUsername(regPhone.trim());
+          setShowLoginModal(false);
+          setIsRegisterMode(false);
+          setActiveTab('patient');
+          
+          // Clear fields
+          setRegName('');
+          setRegPhone('');
+          
+          // Refresh patient list and stats from backend
+          const patientsRes = await fetch(`${API_BASE_URL}/api/patients`);
+          if (patientsRes.ok) {
+            const patientsData = await patientsRes.json();
+            const mappedPatients = patientsData.map(p => ({
+              userId: p.id,
+              name: p.name,
+              bloodGroup: p.blood_group || 'B Positive',
+              lat: p.latitude || 17.39,
+              lon: p.longitude || 78.46,
+              quantity: 2,
+              hospital: 'Hyderabad General Hospital'
+            }));
+            setPatients(mappedPatients);
+          }
+          
+          const metricsRes = await fetch(`${API_BASE_URL}/api/dashboard/metrics`);
+          if (metricsRes.ok) {
+            const metricsData = await metricsRes.json();
+            setStats({
+              total: metricsData.total_users,
+              eligible: metricsData.total_users - metricsData.inactive_donors_count - metricsData.guest_count,
+              activeBridges: metricsData.active_bridges,
+              inactive: metricsData.inactive_donors_count,
+              guests: metricsData.guest_count,
+              avgCallsToDonationsRatio: metricsData.avg_calls_to_donations_ratio,
+              inactivityRate: metricsData.inactivity_rate,
+              rareBloodStock: metricsData.rare_blood_stock,
+              roleCounts: {
+                Guest: metricsData.guest_count,
+                "Emergency Donor": metricsData.emergency_donors_count,
+                "Bridge Donor": metricsData.bridge_donor_count || 2061,
+                Patient: metricsData.patient_count || 84,
+                Volunteer: metricsData.volunteer_count || 3
+              }
+            });
+          }
+        } else {
+          triggerNotification(data.detail || "Registration failed. Please try again.", "warning");
+        }
+      } catch (err) {
+        console.error(err);
+        triggerNotification("Connection to backend patient registration failed.", "warning");
+      }
     }
+  };
+
+  const handleRaiseEmergencyRequest = (e) => {
+    e.preventDefault();
+    if (!emHospital.trim() || !emContact.trim()) {
+      triggerNotification("Please fill in Hospital Location and Guardian Contact.", "warning");
+      return;
+    }
+    
+    // Generate random short hash for patient anonymity
+    const randomHash = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const formattedDate = emDate ? new Date(emDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : new Date(Date.now() + 3*24*60*60*1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    
+    const newRequest = {
+      id: `REQ-${randomHash}`,
+      patientName: `Fighter #F-${randomHash} (${emGender})`,
+      bloodGroup: emBloodGroup,
+      quantity: emUnits,
+      date: formattedDate,
+      location: emHospital.trim(),
+      status: 'URGENT',
+      contact: emContact.trim()
+    };
+    
+    setLocalEmergencyRequests(prev => [newRequest, ...prev]);
+    setShowEmergencyRequestModal(false);
+    
+    // Reset fields
+    setEmHospital('');
+    setEmContact('');
+    setEmAge('');
+    setEmUnits(2);
+    setEmDate('');
+    
+    triggerNotification(`Emergency Blood Request for Fighter #F-${randomHash} raised successfully! AI matching active.`, 'success');
   };
 
   // Handle Triggering Scheduled Transfusions Warnings Simulation
@@ -697,7 +919,7 @@ export default function App() {
           <div className="nav-divider"></div>
           <div>
             <div className="nav-title">BloodMatch 2.0 — AI Portal</div>
-            <div className="nav-subtitle">ThalassemiaFree AI · Hackathon Built</div>
+            <div className="nav-subtitle">Blood Warriors Initiative · Hackathon Built</div>
           </div>
         </div>
         <div className="nav-right">
@@ -745,7 +967,6 @@ export default function App() {
               }}>Sign In</button>
             )}
           </div>
-          <div className="live-pill"><span className="live-dot"></span>React App</div>
         </div>
       </nav>
 
@@ -766,6 +987,9 @@ export default function App() {
                 setLoginUsername('9391551999');
                 setShowLoginModal(true);
               }}>Become a Donor</button>
+              <button className="btn-hero-secondary" style={{ background: '#c0002e', color: 'white', borderColor: '#c0002e' }} onClick={() => {
+                setShowEmergencyRequestModal(true);
+              }}>Raise Emergency Blood Request</button>
             </div>
           </div>
 
@@ -776,62 +1000,28 @@ export default function App() {
               Fighters depend on donors. Listed below are current active transfusion bridges needing support.
             </p>
             <div className="emergency-cards">
-              <div className="emergency-item">
-                <div>
-                  <span className="em-label">URGENT</span>
-                  <div className="em-patient">Baby of Rutuja</div>
-                  <div className="em-blood">A Positive</div>
-                  <div className="em-detail">
-                    <strong>Need:</strong> 4 Units<br/>
-                    <strong>Required by:</strong> 6 Jun 2026<br/>
-                    <strong>Location:</strong> Rainbow Children's Hospital, Banjara Hills, Hyderabad
+              {localEmergencyRequests.map(req => (
+                <div className="emergency-item" key={req.id}>
+                  <div>
+                    <span className="em-label" style={{ background: req.status === 'URGENT' ? 'var(--primary)' : 'var(--muted)' }}>
+                      {req.status}
+                    </span>
+                    <div className="em-patient">{req.patientName}</div>
+                    <div className="em-blood">{req.bloodGroup}</div>
+                    <div className="em-detail">
+                      <strong>Need:</strong> {req.quantity} Unit(s)<br/>
+                      <strong>Required by:</strong> {req.date}<br/>
+                      <strong>Location:</strong> {req.location}
+                    </div>
                   </div>
+                  <button className="btn-hero-primary" style={{ width: '100%', padding: '10px', fontSize: '12.5px' }} onClick={() => {
+                    setLoginRole('donor');
+                    setLoginUsername('9391551999');
+                    setShowLoginModal(true);
+                    triggerNotification("Please Sign In as Donor to check compatibility and respond.", "info");
+                  }}>I Want to Donate</button>
                 </div>
-                <button className="btn-hero-primary" style={{ width: '100%', padding: '10px', fontSize: '12.5px' }} onClick={() => {
-                  setLoginRole('donor');
-                  setLoginUsername('9391551999');
-                  setShowLoginModal(true);
-                  triggerNotification("Please Sign In as Donor to check compatibility and respond.", "info");
-                }}>I Want to Donate</button>
-              </div>
-
-              <div className="emergency-item">
-                <div>
-                  <span className="em-label">URGENT</span>
-                  <div className="em-patient">Siddharth Reddy</div>
-                  <div className="em-blood">O Negative</div>
-                  <div className="em-detail">
-                    <strong>Need:</strong> 2 Units (Rare Type)<br/>
-                    <strong>Required by:</strong> 7 Jun 2026<br/>
-                    <strong>Location:</strong> Aarohi Blood Center, Madhapur, Hyderabad
-                  </div>
-                </div>
-                <button className="btn-hero-primary" style={{ width: '100%', padding: '10px', fontSize: '12.5px' }} onClick={() => {
-                  setLoginRole('donor');
-                  setLoginUsername('9391551999');
-                  setShowLoginModal(true);
-                  triggerNotification("Please Sign In as Donor to check compatibility and respond.", "info");
-                }}>I Want to Donate</button>
-              </div>
-
-              <div className="emergency-item">
-                <div>
-                  <span className="em-label">NORMAL</span>
-                  <div className="em-patient">K. Navya Sri</div>
-                  <div className="em-blood">B Positive</div>
-                  <div className="em-detail">
-                    <strong>Need:</strong> 2 Units<br/>
-                    <strong>Required by:</strong> 9 Jun 2026<br/>
-                    <strong>Location:</strong> Tapadia Diagnostics, Secunderabad, Hyderabad
-                  </div>
-                </div>
-                <button className="btn-hero-primary" style={{ width: '100%', padding: '10px', fontSize: '12.5px' }} onClick={() => {
-                  setLoginRole('donor');
-                  setLoginUsername('9391551999');
-                  setShowLoginModal(true);
-                  triggerNotification("Please Sign In as Donor to check compatibility and respond.", "info");
-                }}>I Want to Donate</button>
-              </div>
+              ))}
             </div>
           </div>
 
@@ -929,8 +1119,7 @@ export default function App() {
               <span className="partner-item">Aarohi Blood Center</span>
               <span className="partner-item">Tapadia Diagnostics</span>
               <span className="partner-item">NTR Trust</span>
-              <span className="partner-item">JP Morgan Chase & Co</span>
-              <span className="partner-item">MasterCard</span>
+              <span className="partner-item">NIAT</span>
               <span className="partner-item" style={{ color: 'var(--primary)', fontWeight: 800 }}>Blend 360</span>
             </div>
           </div>
@@ -1801,7 +1990,8 @@ export default function App() {
                           healthScore: d.health_score || 0.0,
                           churnRisk: d.churn_risk_score || 0.0,
                           preferredChannel: d.preferred_channel || 'WhatsApp',
-                          inactiveComment: d.inactive_trigger_comment
+                          inactiveComment: d.inactive_trigger_comment,
+                          lastDonationDate: d.last_donation_date || d.lastDonation || ""
                         }));
                         setDonors(mappedDonors);
                       }
@@ -2240,27 +2430,48 @@ export default function App() {
             <div className="portal-grid" style={{ marginBottom: '2rem' }}>
               {/* Profile Details */}
               <div>
-                <div className="portal-section-title">My Donor Profile (Masked & Protected)</div>
-                <div className="profile-field">
-                  <span className="profile-field-lbl">Blood Group</span>
-                  <span className="profile-field-val" style={{ color: 'var(--primary)' }}>B Positive</span>
-                </div>
-                <div className="profile-field">
-                  <span className="profile-field-lbl">Donor Anonymity Code</span>
-                  <span className="profile-field-val">Donor #D-82A71</span>
-                </div>
-                <div className="profile-field">
-                  <span className="profile-field-lbl">Total Donations</span>
-                  <span className="profile-field-val">9 Lifetime Donations</span>
-                </div>
-                <div className="profile-field">
-                  <span className="profile-field-lbl">Last Donation Date</span>
-                  <span className="profile-field-val">2025-08-17</span>
-                </div>
-                <div className="profile-field">
-                  <span className="profile-field-lbl">Eligibility Status</span>
-                  <span className="profile-field-val" style={{ color: 'var(--green)' }}>Eligible to Donate Now</span>
-                </div>
+                {(() => {
+                  const currentDonor = donors.find(d => d.phone === loginUsername || d.userId === loginUsername) || {
+                    name: "Rahul Sharma",
+                    bloodGroup: "B Positive",
+                    userId: "donor_82a7155d",
+                    donations: 9,
+                    lastDonationDate: "2025-08-17",
+                    eligibility: "eligible",
+                    preferredChannel: "WhatsApp"
+                  };
+                  return (
+                    <>
+                      <div className="portal-section-title">My Donor Profile (Masked & Protected)</div>
+                      <div className="profile-field">
+                        <span className="profile-field-lbl">My Real Name (Verification)</span>
+                        <span className="profile-field-val" style={{ fontWeight: 'bold' }}>{currentDonor.name}</span>
+                      </div>
+                      <div className="profile-field">
+                        <span className="profile-field-lbl">Blood Group</span>
+                        <span className="profile-field-val" style={{ color: 'var(--primary)', fontWeight: 'bold' }}>{currentDonor.bloodGroup}</span>
+                      </div>
+                      <div className="profile-field">
+                        <span className="profile-field-lbl">Donor Anonymity Code</span>
+                        <span className="profile-field-val">Donor #{currentDonor.userId.substring(0, 8).toUpperCase()}</span>
+                      </div>
+                      <div className="profile-field">
+                        <span className="profile-field-lbl">Total Donations</span>
+                        <span className="profile-field-val">{currentDonor.donations} Lifetime Donation{currentDonor.donations !== 1 ? 's' : ''}</span>
+                      </div>
+                      <div className="profile-field">
+                        <span className="profile-field-lbl">Last Donation Date</span>
+                        <span className="profile-field-val">{currentDonor.lastDonationDate || '2025-08-17'}</span>
+                      </div>
+                      <div className="profile-field">
+                        <span className="profile-field-lbl">Eligibility Status</span>
+                        <span className="profile-field-val" style={{ color: currentDonor.eligibility === 'eligible' ? 'var(--green)' : 'var(--amber)', fontWeight: 'bold' }}>
+                          {currentDonor.eligibility === 'eligible' ? 'Eligible to Donate Now' : 'Snoozed / Temporarily Ineligible'}
+                        </span>
+                      </div>
+                    </>
+                  );
+                })()}
 
                 <div style={{ marginTop: '1.5rem', display: 'flex', gap: '10px' }}>
                   <button className="btn-outreach" style={{ padding: '8px 16px', fontSize: '12px' }} onClick={() => triggerNotification('Status updated: You are now marked as AVAILABLE for active bridges in Hyderabad.', 'success')}>Update Availability</button>
@@ -2401,38 +2612,118 @@ export default function App() {
 
             {/* Achievements and Badges */}
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
-              <div className="portal-section-title">My Earned Milestone Badges</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
-                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '28px' }}>🔓</span>
-                  <div>
-                    <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>First Drop Badge</strong>
-                    <span style={{ fontSize: '11px', color: '#047857' }}>Completed first voluntary donation in Hyderabad.</span>
+              <div className="portal-section-title">My Earned Milestone Badges & Awareness Sharing</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginTop: '1rem', marginBottom: '2rem' }}>
+                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '28px' }}>🔓</span>
+                    <div>
+                      <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>First Drop Badge</strong>
+                      <span style={{ fontSize: '11px', color: '#047857' }}>Completed first voluntary donation in Hyderabad.</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', borderTop: '1px solid rgba(0,0,0,0.05)', paddingTop: '8px' }}>
+                    <a 
+                      href={getBadgeShareUrl('First Drop Badge', 'whatsapp')}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      style={{ fontSize: '10px', padding: '4px 8px', background: '#25D366', color: 'white', borderRadius: '4px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                    >
+                      💬 WhatsApp
+                    </a>
+                    <a 
+                      href={getBadgeShareUrl('First Drop Badge', 'linkedin')}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      style={{ fontSize: '10px', padding: '4px 8px', background: '#0077B5', color: 'white', borderRadius: '4px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                    >
+                      🔗 LinkedIn
+                    </a>
                   </div>
                 </div>
 
-                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '28px' }}>🔓</span>
-                  <div>
-                    <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>Bridge Anchor</strong>
-                    <span style={{ fontSize: '11px', color: '#047857' }}>Supported a single thalassemia child for 3 cycles.</span>
+                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '28px' }}>🔓</span>
+                    <div>
+                      <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>Bridge Anchor</strong>
+                      <span style={{ fontSize: '11px', color: '#047857' }}>Supported a thalassemia child for multiple cycles.</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', borderTop: '1px solid rgba(0,0,0,0.05)', paddingTop: '8px' }}>
+                    <a 
+                      href={getBadgeShareUrl('Bridge Anchor', 'whatsapp')}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      style={{ fontSize: '10px', padding: '4px 8px', background: '#25D366', color: 'white', borderRadius: '4px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                    >
+                      💬 WhatsApp
+                    </a>
+                    <a 
+                      href={getBadgeShareUrl('Bridge Anchor', 'linkedin')}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      style={{ fontSize: '10px', padding: '4px 8px', background: '#0077B5', color: 'white', borderRadius: '4px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                    >
+                      🔗 LinkedIn
+                    </a>
                   </div>
                 </div>
 
-                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '28px' }}>🔓</span>
-                  <div>
-                    <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>Rare Guardian</strong>
-                    <span style={{ fontSize: '11px', color: '#047857' }}>Completed donor rotates for critical shortages.</span>
+                <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green-border)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '28px' }}>🔓</span>
+                    <div>
+                      <strong style={{ fontSize: '12.5px', color: '#065f46', display: 'block' }}>Rare Guardian</strong>
+                      <span style={{ fontSize: '11px', color: '#047857' }}>Supported rare blood type shortage alerts.</span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px', borderTop: '1px solid rgba(0,0,0,0.05)', paddingTop: '8px' }}>
+                    <a 
+                      href={getBadgeShareUrl('Rare Guardian', 'whatsapp')}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      style={{ fontSize: '10px', padding: '4px 8px', background: '#25D366', color: 'white', borderRadius: '4px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                    >
+                      💬 WhatsApp
+                    </a>
+                    <a 
+                      href={getBadgeShareUrl('Rare Guardian', 'linkedin')}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      style={{ fontSize: '10px', padding: '4px 8px', background: '#0077B5', color: 'white', borderRadius: '4px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                    >
+                      🔗 LinkedIn
+                    </a>
                   </div>
                 </div>
 
                 {hyderabadQuestCount >= 421 ? (
-                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', padding: '1rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span style={{ fontSize: '28px' }}>🛡️</span>
-                    <div>
-                      <strong style={{ fontSize: '12.5px', color: '#1e40af', display: 'block' }}>Community Shield</strong>
-                      <span style={{ fontSize: '11px', color: '#1d4ed8' }}>Collaborated in Chapter's monthly quest targets!</span>
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ fontSize: '28px' }}>🛡️</span>
+                      <div>
+                        <strong style={{ fontSize: '12.5px', color: '#1e40af', display: 'block' }}>Community Shield</strong>
+                        <span style={{ fontSize: '11px', color: '#1d4ed8' }}>Collaborated in Chapter's monthly quest targets!</span>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', borderTop: '1px solid rgba(0,0,0,0.05)', paddingTop: '8px' }}>
+                      <a 
+                        href={getBadgeShareUrl('Community Shield', 'whatsapp')}
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        style={{ fontSize: '10px', padding: '4px 8px', background: '#25D366', color: 'white', borderRadius: '4px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                      >
+                        💬 WhatsApp
+                      </a>
+                      <a 
+                        href={getBadgeShareUrl('Community Shield', 'linkedin')}
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        style={{ fontSize: '10px', padding: '4px 8px', background: '#0077B5', color: 'white', borderRadius: '4px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 600 }}
+                      >
+                        🔗 LinkedIn
+                      </a>
                     </div>
                   </div>
                 ) : (
@@ -2445,6 +2736,98 @@ export default function App() {
                   </div>
                 )}
               </div>
+
+              {/* Donation Certificates Section */}
+              {(() => {
+                const currentDonor = donors.find(d => d.phone === loginUsername || d.userId === loginUsername) || {
+                  name: "Rahul Sharma",
+                  bloodGroup: "B Positive",
+                  userId: "donor_82a7155d",
+                  donations: 9,
+                  lastDonationDate: "2025-08-17"
+                };
+                
+                // Construct dynamic list of certificates
+                const certs = [];
+                if (currentDonor.donations > 0) {
+                  certs.push({
+                    id: `CERT-${currentDonor.userId.substring(0, 6).toUpperCase()}-1`,
+                    date: currentDonor.lastDonationDate || "2025-08-17",
+                    bloodGroup: currentDonor.bloodGroup,
+                    token: "BB-D82A71",
+                    donorName: currentDonor.name
+                  });
+                }
+                // If they have multiple donations, seed a couple of historical ones for aesthetic richness
+                if (currentDonor.donations > 1) {
+                  certs.push({
+                    id: `CERT-${currentDonor.userId.substring(0, 6).toUpperCase()}-2`,
+                    date: "2025-05-15",
+                    bloodGroup: currentDonor.bloodGroup,
+                    token: "BB-A41B92",
+                    donorName: currentDonor.name
+                  });
+                  certs.push({
+                    id: `CERT-${currentDonor.userId.substring(0, 6).toUpperCase()}-3`,
+                    date: "2025-02-10",
+                    bloodGroup: currentDonor.bloodGroup,
+                    token: "BB-F71D38",
+                    donorName: currentDonor.name
+                  });
+                }
+
+                return (
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.5rem', marginTop: '1.5rem' }}>
+                    <div className="portal-section-title">My Donation Certificates (Awareness Center)</div>
+                    <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '1rem', lineHeight: '1.4' }}>
+                      Each successful blood donation logs a digital Certificate of Appreciation. Download your certificate or share it directly to your social media to inspire others to donate!
+                    </p>
+                    {certs.length > 0 ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                        {certs.map(cert => (
+                          <div key={cert.id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '1.25rem', boxShadow: 'var(--shadow-sm)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <span style={{ fontSize: '10px', background: 'var(--primary-light)', color: 'var(--primary)', padding: '2px 8px', borderRadius: '4px', fontWeight: 700 }}>{cert.id}</span>
+                                <span style={{ fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>{cert.date}</span>
+                              </div>
+                              <h4 style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--text)', marginBottom: '4px' }}>📜 Certificate of Appreciation</h4>
+                              <p style={{ fontSize: '11px', color: 'var(--muted)', lineHeight: '1.4', marginBottom: '1rem' }}>
+                                Awarded to <b>{cert.donorName}</b> for saving a life by donating <b>{cert.bloodGroup}</b> blood (Token: {cert.token}).
+                              </p>
+                            </div>
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                              <button 
+                                className="btn-cert-download" 
+                                style={{ flex: 1, padding: '8px', fontSize: '11.5px', background: 'var(--primary)', borderColor: 'var(--primary)', cursor: 'pointer' }}
+                                onClick={() => {
+                                  setSelectedCertificate(cert);
+                                  setShowCertificateModal(true);
+                                }}
+                              >
+                                View / Download
+                              </button>
+                              <a 
+                                href={getCertificateShareUrl(cert.token, 'whatsapp')}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn-reengage"
+                                style={{ padding: '8px 12px', fontSize: '11.5px', border: '1px solid var(--border)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                              >
+                                💬 Share Story
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ background: 'var(--surface2)', padding: '1.5rem', borderRadius: '8px', textAlign: 'center', color: 'var(--muted)', fontSize: '12px' }}>
+                        No donation certificates found yet. Complete a scheduled bridge donation to generate one!
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -2541,7 +2924,7 @@ export default function App() {
       {/* FOOTER */}
       <footer>
         <div className="footer-inner">
-          <div className="footer-copy">© Blood Warriors 2026 · BloodMatch 2.0 — ThalassemiaFree AI · Member A Frontend</div>
+          <div className="footer-copy">© Blood Warriors 2026 · BloodMatch 2.0</div>
           <div className="footer-links">
             <a href="https://www.bloodwarriors.in" target="_blank" rel="noreferrer">bloodwarriors.in</a>
             <a href="https://www.bloodwarriors.in/about" target="_blank" rel="noreferrer">About</a>
@@ -2631,7 +3014,7 @@ export default function App() {
                 }}
                 onClick={() => setIsRegisterMode(true)}
               >
-                Register as Donor
+                Register
               </button>
             </div>
 
@@ -2711,14 +3094,35 @@ export default function App() {
                 </button>
                 <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '12px' }}>
                   <a href="#" style={{ color: 'var(--primary)', fontWeight: 600 }} onClick={(e) => { e.preventDefault(); setIsRegisterMode(true); }}>
-                    Don't have an account? Register as Volunteer Donor
+                    Don't have an account? Register Now
                   </a>
                 </div>
               </>
             ) : (
               <form onSubmit={handleDonorRegistration}>
-                <div className="auth-title" style={{ marginTop: '0' }}>Register New Donor</div>
-                <div className="auth-sub">Enter details to join the Blood Warriors network</div>
+                <div className="auth-title" style={{ marginTop: '0' }}>Register to BloodMatch</div>
+                <div className="auth-sub">Choose your role and enter your details to register</div>
+
+                <div className="role-select-grid" style={{ marginBottom: '1rem', display: 'flex', gap: '10px' }}>
+                  <button 
+                    type="button"
+                    className={`role-btn ${regRole === 'donor' ? 'active' : ''}`}
+                    onClick={() => setRegRole('donor')}
+                    style={{ flex: 1, padding: '10px', fontSize: '12.5px', justifyContent: 'center' }}
+                  >
+                    <span className="role-icon">🩸</span>
+                    <span>Volunteer Donor</span>
+                  </button>
+                  <button 
+                    type="button"
+                    className={`role-btn ${regRole === 'patient' ? 'active' : ''}`}
+                    onClick={() => setRegRole('patient')}
+                    style={{ flex: 1, padding: '10px', fontSize: '12.5px', justifyContent: 'center' }}
+                  >
+                    <span className="role-icon">👤</span>
+                    <span>Thalassemia Patient</span>
+                  </button>
+                </div>
 
                 <div className="auth-input-group">
                   <label className="auth-input-label">Full Name</label>
@@ -2814,12 +3218,21 @@ export default function App() {
                     onChange={(e) => setRegJoinBridge(e.target.checked)}
                     style={{ width: '18px', height: '18px', cursor: 'pointer' }}
                   />
-                  <label htmlFor="joinBridgeCheck" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                    Join a Patient Bridge? (Yes / No)
-                    <span style={{ display: 'block', fontSize: '10px', color: 'var(--muted)', fontWeight: 'normal', marginTop: '2px' }}>
-                      Allocates you to a matched child needing rotating transfusions. If No, you will be notified only during emergencies.
-                    </span>
-                  </label>
+                  {regRole === 'donor' ? (
+                    <label htmlFor="joinBridgeCheck" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      Join a Patient Bridge? (Yes / No)
+                      <span style={{ display: 'block', fontSize: '10px', color: 'var(--muted)', fontWeight: 'normal', marginTop: '2px' }}>
+                        Allocates you to a matched child needing rotating transfusions. If No, you will be notified only during emergencies.
+                      </span>
+                    </label>
+                  ) : (
+                    <label htmlFor="joinBridgeCheck" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      Create Dedicated Blood Bridge? (Yes / No)
+                      <span style={{ display: 'block', fontSize: '10px', color: 'var(--muted)', fontWeight: 'normal', marginTop: '2px' }}>
+                        Sets up a rotating group of 8-10 regular donors to support your regular transfusion cycle.
+                      </span>
+                    </label>
+                  )}
                 </div>
 
                 <button type="submit" className="btn-login" style={{ marginTop: '1.25rem' }}>
@@ -2833,6 +3246,182 @@ export default function App() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* DONATION CERTIFICATE VIEWER MODAL */}
+      {showCertificateModal && selectedCertificate && (
+        <div className="modal-overlay" style={{ zIndex: 2000 }}>
+          <div className="modal-content" style={{ width: '600px', padding: '2rem', background: '#fcfbf7', border: '8px double #d4af37', borderRadius: '8px', boxShadow: '0 10px 30px rgba(0,0,0,0.25)', position: 'relative' }}>
+            <button className="modal-close" style={{ color: '#888', right: '15px', top: '15px' }} onClick={() => { setShowCertificateModal(false); setSelectedCertificate(null); }}>×</button>
+            
+            <div style={{ textAlign: 'center', fontFamily: "'Georgia', serif", color: '#333' }}>
+              <div style={{ fontSize: '2.5rem', color: '#c0002e', fontWeight: 'bold', letterSpacing: '2px', marginBottom: '0.5rem' }}>🎗️</div>
+              <h2 style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#8b0000', textTransform: 'uppercase', letterSpacing: '3px', margin: '0 0 1.5rem' }}>Certificate of Appreciation</h2>
+              
+              <p style={{ fontSize: '14px', fontStyle: 'italic', color: '#555', margin: '0 0 1rem' }}>This is proudly presented to</p>
+              <h1 style={{ fontSize: '2.25rem', fontWeight: 'bold', color: '#111', borderBottom: '2px solid #d4af37', display: 'inline-block', paddingBottom: '4px', margin: '0 0 1.5rem', minWidth: '300px' }}>
+                {selectedCertificate.donorName}
+              </h1>
+              
+              <p style={{ fontSize: '13px', lineHeight: '1.8', color: '#444', margin: '0 auto 2rem', maxWidth: '480px' }}>
+                For their selfless and noble contribution of voluntary blood donation (Blood Group: <b>{selectedCertificate.bloodGroup}</b>, Transaction Token: <b>{selectedCertificate.token}</b>) on <b>{selectedCertificate.date}</b>, successfully securing a patient's Thalassemia transfusion bridge. Your act of compassion has directly saved a life.
+              </p>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '3rem', borderTop: '1px dashed #ccc', paddingTop: '1.5rem', paddingLeft: '1rem', paddingRight: '1rem' }}>
+                <div>
+                  <div style={{ fontFamily: 'monospace', fontSize: '10px', color: '#888' }}>TOKEN: {selectedCertificate.token}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#555', marginTop: '4px' }}>VERIFIED SECURE</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '18px', fontFamily: "'Zapfino', cursive, serif", color: '#8b0000', fontStyle: 'italic' }}>Blood Warriors</div>
+                  <div style={{ fontSize: '11px', color: '#555', fontWeight: 'bold', marginTop: '4px' }}>OFFICIAL NETWORK SEAL</div>
+                </div>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '10px', marginTop: '2.5rem', borderTop: '1px solid #eee', paddingTop: '1.25rem' }}>
+              <button 
+                className="btn-cert-download"
+                style={{ flex: 1, padding: '10px', background: 'var(--primary)', borderColor: 'var(--primary)', cursor: 'pointer' }}
+                onClick={() => {
+                  downloadCertificateAsPDF(selectedCertificate);
+                  triggerNotification("Generating PDF print layout for Certificate of Appreciation...", "success");
+                }}
+              >
+                📥 Download PDF
+              </button>
+              
+              <a 
+                href={getCertificateShareUrl(selectedCertificate.token, 'whatsapp')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-hero-primary"
+                style={{ background: '#25D366', borderColor: '#25D366', color: 'white', textDecoration: 'none', padding: '10px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+              >
+                💬 WhatsApp Story
+              </a>
+              
+              <a 
+                href={getCertificateShareUrl(selectedCertificate.token, 'linkedin')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-hero-primary"
+                style={{ background: '#0077B5', borderColor: '#0077B5', color: 'white', textDecoration: 'none', padding: '10px 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+              >
+                🔗 LinkedIn Share
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EMERGENCY REQUEST MODAL */}
+      {showEmergencyRequestModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ width: '450px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <button className="modal-close" onClick={() => setShowEmergencyRequestModal(false)}>×</button>
+            <div className="auth-title" style={{ marginTop: '0' }}>Raise Emergency Request</div>
+            <div className="auth-sub">Alert nearby compatible donors instantly</div>
+
+            <form onSubmit={handleRaiseEmergencyRequest}>
+              <div className="auth-input-group">
+                <label className="auth-input-label">Patient Gender</label>
+                <select 
+                  className="match-selector" 
+                  value={emGender}
+                  onChange={(e) => setEmGender(e.target.value)}
+                >
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div className="auth-input-group">
+                <label className="auth-input-label">Patient Age (Years)</label>
+                <input 
+                  type="number" 
+                  className="auth-input" 
+                  placeholder="e.g. 8" 
+                  value={emAge}
+                  onChange={(e) => setEmAge(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="auth-input-group">
+                <label className="auth-input-label">Required Blood Group</label>
+                <select 
+                  className="match-selector" 
+                  value={emBloodGroup}
+                  onChange={(e) => setEmBloodGroup(e.target.value)}
+                >
+                  <option value="O Positive">O Positive (O+)</option>
+                  <option value="O Negative">O Negative (O-)</option>
+                  <option value="A Positive">A Positive (A+)</option>
+                  <option value="A Negative">A Negative (A-)</option>
+                  <option value="B Positive">B Positive (B+)</option>
+                  <option value="B Negative">B Negative (B-)</option>
+                  <option value="AB Positive">AB Positive (AB+)</option>
+                  <option value="AB Negative">AB Negative (AB-)</option>
+                </select>
+              </div>
+
+              <div className="auth-input-group">
+                <label className="auth-input-label">Hospital Location & Address</label>
+                <input 
+                  type="text" 
+                  className="auth-input" 
+                  placeholder="e.g. Rainbow Children's Hospital, Banjara Hills" 
+                  value={emHospital}
+                  onChange={(e) => setEmHospital(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div className="auth-input-group">
+                  <label className="auth-input-label">Units Needed</label>
+                  <input 
+                    type="number" 
+                    className="auth-input" 
+                    min="1" 
+                    max="10" 
+                    value={emUnits}
+                    onChange={(e) => setEmUnits(parseInt(e.target.value) || 2)}
+                    required
+                  />
+                </div>
+                <div className="auth-input-group">
+                  <label className="auth-input-label">Required By Date</label>
+                  <input 
+                    type="date" 
+                    className="auth-input" 
+                    value={emDate}
+                    onChange={(e) => setEmDate(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="auth-input-group">
+                <label className="auth-input-label">Guardian Contact Number</label>
+                <input 
+                  type="tel" 
+                  className="auth-input" 
+                  placeholder="e.g. +91 9876543210" 
+                  value={emContact}
+                  onChange={(e) => setEmContact(e.target.value)}
+                  required
+                />
+              </div>
+
+              <button type="submit" className="btn-login" style={{ marginTop: '1rem', background: '#c0002e' }}>
+                Submit Emergency Request
+              </button>
+            </form>
           </div>
         </div>
       )}

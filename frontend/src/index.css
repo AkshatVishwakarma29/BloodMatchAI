@@ -1627,3 +1627,109 @@ footer {
   color: var(--primary);
 }
 
+/* ── MOBILE RESPONSIVENESS OVERRIDES ── */
+@media (max-width: 1024px) {
+  nav {
+    height: auto;
+    flex-direction: column;
+    padding: 1.25rem 1rem;
+    gap: 1rem;
+  }
+  .nav-left {
+    width: 100%;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .nav-divider {
+    display: none;
+  }
+  .nav-right {
+    width: 100%;
+    justify-content: center;
+    gap: 1rem;
+  }
+  .nav-links {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .hero-heading {
+    font-size: 2rem !important;
+    padding: 0 0.5rem;
+  }
+  .hero-desc {
+    font-size: 1rem !important;
+    padding: 0 0.5rem;
+  }
+  .hero-ctas {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto;
+  }
+  .btn-hero-primary,
+  .btn-hero-secondary {
+    text-align: center;
+    width: 100%;
+  }
+  .timeline-grid,
+  .approach-grid,
+  .test-grid,
+  .emergency-cards,
+  .kpi-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .row-2,
+  .row-3 {
+    grid-template-columns: 1fr !important;
+  }
+  /* Force inline grids to stack */
+  div[style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+    gap: 1.5rem !important;
+  }
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.25rem;
+    padding: 1.5rem 1rem;
+  }
+  .header-stats {
+    width: 100%;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .hstat {
+    text-align: left;
+  }
+  .container {
+    padding: 1rem;
+  }
+  .alert {
+    margin: 1rem 1rem 0;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .alert-badge {
+    align-self: flex-start;
+  }
+  .modal-content {
+    width: 95% !important;
+    padding: 1.5rem !important;
+  }
+  .role-select-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .profile-field {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+}
+
+
