@@ -30,9 +30,29 @@ def on_startup():
         # Create tables
         Base.metadata.create_all(bind=engine)
         
-        # Check if seeding is needed
+        # Database check, alterations, seeding, and backfilling
         db_session = next(get_db())
         try:
+            # Safe column alteration for SQLite
+            from sqlalchemy import text
+            res = db_session.execute(text("PRAGMA table_info(bridges)")).fetchall()
+            columns = [row[1] for row in res]
+            
+            alterations_made = False
+            if "telegram_group_link" not in columns:
+                print("Altering bridges table to add telegram_group_link column...")
+                db_session.execute(text("ALTER TABLE bridges ADD COLUMN telegram_group_link VARCHAR"))
+                alterations_made = True
+            if "telegram_group_name" not in columns:
+                print("Altering bridges table to add telegram_group_name column...")
+                db_session.execute(text("ALTER TABLE bridges ADD COLUMN telegram_group_name VARCHAR"))
+                alterations_made = True
+            
+            if alterations_made:
+                db_session.commit()
+                print("Database alterations committed.")
+
+            # Check if seeding is needed
             user_count = db_session.query(User).count()
             if user_count == 0:
                 print("Database is empty. Running auto-seeding...")
@@ -43,8 +63,21 @@ def on_startup():
                     print("Auto-seeding completed successfully!")
                 else:
                     print(f"Dataset.csv not found at {csv_file}. Skipping auto-seeding.")
+            
+            # Backfill existing bridges if telegram_group_link is None
+            existing_bridges = db_session.query(Bridge).filter(Bridge.telegram_group_link == None).all()
+            if existing_bridges:
+                print(f"Backfilling {len(existing_bridges)} existing bridges with Telegram group links...")
+                for b in existing_bridges:
+                    # Fighter #F-XXXX
+                    anon_suffix = b.patient_id[-4:].upper() if len(b.patient_id) >= 4 else "ABCD"
+                    b.telegram_group_name = f"BloodBridge - Fighter #F-{anon_suffix}"
+                    b.telegram_group_link = f"https://t.me/joinchat/bloodbridge_{anon_suffix.lower()}"
+                db_session.commit()
+                print("Backfill completed successfully.")
         except Exception as e:
-            print(f"Failed to query database during startup seeding check: {e}")
+            print(f"Failed during startup seeding or table check/alteration: {e}")
+            db_session.rollback()
         finally:
             db_session.close()
     except Exception as e:
@@ -354,8 +387,14 @@ def register_donor(payload: schemas.DonorRegister, db: Session = Depends(get_db)
             new_link = BridgeDonorLink(bridge_id=selected_bridge.id, donor_id=new_donor.id)
             db.add(new_link)
             db.commit()
+            db.refresh(new_donor)
             
-            assigned_bridge_msg = f" Matched with Patient {selected_bridge.patient_id[:8].upper()} (Current bridge size: {current_size + 1}/10)."
+            # Anonymity: only show Telegram group info to prevent donor knowing the patient directly
+            assigned_bridge_msg = (
+                f" Matched with secure Telegram Group: {selected_bridge.telegram_group_name} "
+                f"(Invite: {selected_bridge.telegram_group_link}). "
+                f"Bridge size: {current_size + 1}/10."
+            )
             
     # Log registration
     outreach.log_notification(
@@ -420,6 +459,9 @@ def register_patient(payload: schemas.PatientRegister, db: Session = Depends(get
         existing_bridge = db.query(Bridge).filter(Bridge.patient_id == new_patient.id).first()
         if not existing_bridge:
             bridge_id = f"bridge_{hash(new_patient.id) & 0xffffffff:x}"
+            anon_suffix = new_patient.id[-4:].upper() if len(new_patient.id) >= 4 else "ABCD"
+            tg_name = f"BloodBridge - Fighter #F-{anon_suffix}"
+            tg_link = f"https://t.me/joinchat/bloodbridge_{anon_suffix.lower()}"
             new_bridge = Bridge(
                 id=bridge_id,
                 patient_id=new_patient.id,
@@ -429,7 +471,9 @@ def register_patient(payload: schemas.PatientRegister, db: Session = Depends(get
                 quantity_required=1.0,
                 frequency_in_days=21,
                 status_of_bridge=True,
-                expected_next_transfusion_date=(datetime.date.today() + datetime.timedelta(days=21)).strftime("%Y-%m-%d")
+                expected_next_transfusion_date=(datetime.date.today() + datetime.timedelta(days=21)).strftime("%Y-%m-%d"),
+                telegram_group_name=tg_name,
+                telegram_group_link=tg_link
             )
             db.add(new_bridge)
             db.commit()
@@ -437,6 +481,7 @@ def register_patient(payload: schemas.PatientRegister, db: Session = Depends(get
             # Log notification to outreach console
             outreach.log_notification(
                 f"📝 NEW PATIENT BRIDGE CREATED: Patient [Masked: {new_patient.masked_name}] created a dedicated blood bridge. "
+                f"Telegram Group: {tg_name} (Invite: {tg_link}). "
                 f"Needs compatible {new_patient.blood_group} blood."
             )
             

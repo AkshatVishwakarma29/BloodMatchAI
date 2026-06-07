@@ -34,6 +34,8 @@ class UserResponse(UserBase):
     churn_risk_score: Optional[float] = None
     masked_name: Optional[str] = None
     masked_phone: Optional[str] = None
+    telegram_link: Optional[str] = None
+    telegram_group_name: Optional[str] = None
 
     class Config:
         from_attributes = True

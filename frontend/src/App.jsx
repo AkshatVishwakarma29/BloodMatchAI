@@ -384,7 +384,9 @@ export default function App() {
             quantity: 1, // default needed quantity
             hospital: 'Gandhi Hospital',
             bridgeBloodGroup: p.blood_group,
-            bridgeGender: p.gender || 'Any'
+            bridgeGender: p.gender || 'Any',
+            telegramLink: p.telegram_link,
+            telegramGroupName: p.telegram_group_name
           }));
           setPatients(mappedPatients);
           if (mappedPatients.length > 0) {
@@ -413,7 +415,9 @@ export default function App() {
             churnRisk: d.churn_risk_score || 0.0,
             preferredChannel: d.preferred_channel || 'WhatsApp',
             inactiveComment: d.inactive_trigger_comment,
-            lastDonationDate: d.last_donation_date || d.lastDonation || ""
+            lastDonationDate: d.last_donation_date || d.lastDonation || "",
+            telegramLink: d.telegram_link,
+            telegramGroupName: d.telegram_group_name
           }));
           setDonors(mappedDonors);
         }
@@ -776,6 +780,11 @@ export default function App() {
         const data = await response.json();
         if (response.ok) {
           triggerNotification(`Registration complete! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'}.`, 'success');
+          if (data.telegram_group_name && data.telegram_group_link) {
+            setTimeout(() => {
+              triggerNotification(`Matched to secure Telegram Group: ${data.telegram_group_name}. Please join from your portal!`, 'success');
+            }, 1000);
+          }
           
           setIsLoggedIn(true);
           setUserRole('donor');
@@ -838,6 +847,11 @@ export default function App() {
         const data = await response.json();
         if (response.ok) {
           triggerNotification(`Registration complete! Registered as Thalassemia Patient.`, 'success');
+          if (data.telegram_group_name && data.telegram_group_link) {
+            setTimeout(() => {
+              triggerNotification(`Secure Telegram Group created: ${data.telegram_group_name}. Please join from your portal!`, 'success');
+            }, 1000);
+          }
           
           setIsLoggedIn(true);
           setUserRole('patient');
@@ -859,11 +873,17 @@ export default function App() {
             const mappedPatients = patientsData.map(p => ({
               userId: p.id,
               name: p.name,
-              bloodGroup: p.blood_group || 'B Positive',
+              phone: p.phone,
+              bloodGroup: p.blood_group || 'O Positive',
+              gender: p.gender || 'Any',
               lat: p.latitude || 17.39,
               lon: p.longitude || 78.46,
-              quantity: 2,
-              hospital: 'Hyderabad General Hospital'
+              quantity: 1,
+              hospital: 'Gandhi Hospital',
+              bridgeBloodGroup: p.blood_group,
+              bridgeGender: p.gender || 'Any',
+              telegramLink: p.telegram_link,
+              telegramGroupName: p.telegram_group_name
             }));
             setPatients(mappedPatients);
           }
@@ -909,6 +929,11 @@ export default function App() {
         const data = await response.json();
         if (response.ok) {
           triggerNotification(`Registration complete! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'}.`, 'success');
+          if (data.telegram_group_name && data.telegram_group_link) {
+            setTimeout(() => {
+              triggerNotification(`Matched to secure Telegram Group: ${data.telegram_group_name}. Please join from your portal!`, 'success');
+            }, 1000);
+          }
           
           setIsLoggedIn(true);
           setUserRole('donor');
@@ -945,7 +970,9 @@ export default function App() {
               churnRisk: d.churn_risk_score || 0.0,
               preferredChannel: d.preferred_channel || 'WhatsApp',
               inactiveComment: d.inactive_trigger_comment,
-              lastDonationDate: d.last_donation_date || d.lastDonation || ""
+              lastDonationDate: d.last_donation_date || d.lastDonation || "",
+              telegramLink: d.telegram_link,
+              telegramGroupName: d.telegram_group_name
             }));
             setDonors(mappedDonors);
           }
@@ -994,6 +1021,11 @@ export default function App() {
         const data = await response.json();
         if (response.ok) {
           triggerNotification(`Registration complete! Registered as Thalassemia Patient.`, 'success');
+          if (data.telegram_group_name && data.telegram_group_link) {
+            setTimeout(() => {
+              triggerNotification(`Secure Telegram Group created: ${data.telegram_group_name}. Please join from your portal!`, 'success');
+            }, 1000);
+          }
           
           setIsLoggedIn(true);
           setUserRole('patient');
@@ -1016,11 +1048,17 @@ export default function App() {
             const mappedPatients = patientsData.map(p => ({
               userId: p.id,
               name: p.name,
-              bloodGroup: p.blood_group || 'B Positive',
+              phone: p.phone,
+              bloodGroup: p.blood_group || 'O Positive',
+              gender: p.gender || 'Any',
               lat: p.latitude || 17.39,
               lon: p.longitude || 78.46,
-              quantity: 2,
-              hospital: 'Hyderabad General Hospital'
+              quantity: 1,
+              hospital: 'Gandhi Hospital',
+              bridgeBloodGroup: p.blood_group,
+              bridgeGender: p.gender || 'Any',
+              telegramLink: p.telegram_link,
+              telegramGroupName: p.telegram_group_name
             }));
             setPatients(mappedPatients);
           }
@@ -2579,18 +2617,51 @@ export default function App() {
                 </div>
 
                 {/* Patient Detail Summary */}
-                {patients.find(p => p.userId === selectedPatientId) && (
-                  <div className="match-request">
-                    <div className="match-req-badge">🚨 Active Request Details</div>
-                    <div className="match-req-title">
-                      Patient #{selectedPatientId.substring(0, 8).toUpperCase()} — Needs {patients.find(p => p.userId === selectedPatientId).bridgeBloodGroup || patients.find(p => p.userId === selectedPatientId).bloodGroup}
+                {patients.find(p => p.userId === selectedPatientId) && (() => {
+                  const selPat = patients.find(p => p.userId === selectedPatientId);
+                  return (
+                    <div className="match-request">
+                      <div className="match-req-badge">🚨 Active Request Details</div>
+                      <div className="match-req-title">
+                        Patient #{selectedPatientId.substring(0, 8).toUpperCase()} — Needs {selPat.bridgeBloodGroup || selPat.bloodGroup}
+                      </div>
+                      <div className="match-req-sub">
+                        Quantity: {selPat.quantity} Unit(s) | Hospital: {selPat.hospital}<br/>
+                        Preferred Gender Match: <b>{selPat.bridgeGender || 'Any'}</b> | Location: Hyderabad ({selPat.lat}, {selPat.lon})
+                        {selPat.telegramGroupName && (
+                          <div style={{
+                            marginTop: '10px',
+                            background: 'rgba(36, 161, 222, 0.12)',
+                            border: '1px solid rgba(36, 161, 222, 0.3)',
+                            color: '#1e81b0',
+                            borderRadius: '8px',
+                            padding: '10px 12px',
+                            fontSize: '11.5px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            boxShadow: 'var(--shadow-sm)'
+                          }}>
+                            <span>💬 <b>Telegram Bridge:</b> {selPat.telegramGroupName}</span>
+                            <a 
+                              href={selPat.telegramLink} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              style={{ 
+                                color: '#1e81b0', 
+                                fontWeight: 'bold', 
+                                textDecoration: 'underline',
+                                marginLeft: '10px'
+                              }}
+                            >
+                              Open Group
+                            </a>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="match-req-sub">
-                      Quantity: {patients.find(p => p.userId === selectedPatientId).quantity} Unit(s) | Hospital: {patients.find(p => p.userId === selectedPatientId).hospital}<br/>
-                      Preferred Gender Match: <b>{patients.find(p => p.userId === selectedPatientId).bridgeGender || 'Any'}</b> | Location: Hyderabad ({patients.find(p => p.userId === selectedPatientId).lat}, {patients.find(p => p.userId === selectedPatientId).lon})
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 <div className="match-label">AI-Ranked Compatible Donors</div>
                 <div className="match-list-container">
@@ -2806,6 +2877,54 @@ export default function App() {
 
               {/* Secure Token & QR Card */}
               <div>
+                {(() => {
+                  const currentDonor = donors.find(d => d.phone === loginUsername || d.userId === loginUsername) || {};
+                  if (currentDonor.telegramLink) {
+                    return (
+                      <div style={{
+                        background: 'linear-gradient(135deg, #24a1de 0%, #1e81b0 100%)',
+                        color: 'white',
+                        borderRadius: '12px',
+                        padding: '1.25rem',
+                        marginBottom: '1.5rem',
+                        boxShadow: 'var(--shadow-md)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                          <span style={{ fontSize: '20px' }}>💬</span>
+                          <strong style={{ fontSize: '13px' }}>Active Telegram Bridge Group</strong>
+                        </div>
+                        <p style={{ fontSize: '11px', opacity: 0.95, lineHeight: '1.45', marginBottom: '12px' }}>
+                          You are mapped to a secure, anonymized blood bridge group. The chatbot <b>Veeru 2.0</b> will post alerts here about transfusion schedules. Double-blind anonymity is enforced.
+                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 'bold', fontFamily: 'monospace' }}>{currentDonor.telegramGroupName}</span>
+                          <a 
+                            href={currentDonor.telegramLink} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            style={{ 
+                              background: 'white', 
+                              color: '#1e81b0', 
+                              border: 'none', 
+                              padding: '6px 12px', 
+                              fontSize: '11px', 
+                              fontWeight: 'bold', 
+                              textDecoration: 'none', 
+                              borderRadius: '6px',
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                              transition: 'transform 0.2s ease-in-out'
+                            }}
+                          >
+                            Join Group
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
                 <div className="portal-section-title">🏥 Secure Token & QR Verification</div>
                 <p style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '1rem', lineHeight: '1.4' }}>
                   To maintain double-blind anonymity and prevent direct recipient-donor transactional pressure, present this secure transactional token at the hospital blood bank. 

@@ -37,6 +37,7 @@ class User(Base):
     bridges = relationship("Bridge", back_populates="patient", foreign_keys="Bridge.patient_id")
     donation_requests = relationship("Request", back_populates="patient", foreign_keys="Request.patient_id")
     outreach_events = relationship("OutreachEvent", back_populates="donor")
+    bridge_links = relationship("BridgeDonorLink", back_populates="donor", foreign_keys="BridgeDonorLink.donor_id")
 
     @property
     def masked_name(self) -> str:
@@ -60,6 +61,30 @@ class User(Base):
             return self.phone[:7] + "*" * (len(self.phone) - 10) + self.phone[-3:]
         return "****"
 
+    @property
+    def telegram_link(self) -> str:
+        if self.role == "Patient":
+            active_bridge = next((b for b in self.bridges if b.bridge_status), None)
+            if active_bridge:
+                return active_bridge.telegram_group_link
+        elif self.role == "Bridge Donor":
+            active_link = next((link for link in self.bridge_links if link.bridge and link.bridge.bridge_status), None)
+            if active_link:
+                return active_link.bridge.telegram_group_link
+        return None
+
+    @property
+    def telegram_group_name(self) -> str:
+        if self.role == "Patient":
+            active_bridge = next((b for b in self.bridges if b.bridge_status), None)
+            if active_bridge:
+                return active_bridge.telegram_group_name
+        elif self.role == "Bridge Donor":
+            active_link = next((link for link in self.bridge_links if link.bridge and link.bridge.bridge_status), None)
+            if active_link:
+                return active_link.bridge.telegram_group_name
+        return None
+
 
 class Bridge(Base):
     __tablename__ = "bridges"
@@ -74,6 +99,8 @@ class Bridge(Base):
     expected_next_transfusion_date = Column(String, nullable=True)
     frequency_in_days = Column(Integer, nullable=True)
     status_of_bridge = Column(Boolean, default=True)
+    telegram_group_link = Column(String, nullable=True)
+    telegram_group_name = Column(String, nullable=True)
     
     # Relationships
     patient = relationship("User", back_populates="bridges", foreign_keys=[patient_id])
@@ -88,7 +115,7 @@ class BridgeDonorLink(Base):
     
     # Relationships
     bridge = relationship("Bridge", back_populates="donors")
-    donor = relationship("User")
+    donor = relationship("User", back_populates="bridge_links")
 
 class Request(Base):
     __tablename__ = "requests"

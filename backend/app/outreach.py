@@ -212,6 +212,16 @@ async def simulate_scheduled_transfusion_orchestration(patient_id: str, request_
         links = db.query(BridgeDonorLink).filter(BridgeDonorLink.bridge_id == bridge.id).all()
         bridge_donor_ids = [link.donor_id for link in links]
         
+        # Post Telegram Bot Alert in the Group
+        if bridge.telegram_group_name:
+            anon_suffix = patient.id[-4:].upper() if len(patient.id) >= 4 else "ABCD"
+            tg_message = (
+                f"🤖 [Telegram Bot Veeru 2.0] Alert in Group \"{bridge.telegram_group_name}\": "
+                f"Fighter #F-{anon_suffix} has a blood transfusion scheduled in 3 days on {request.needed_by}. "
+                f"Calling all active group donors to verify availability!"
+            )
+            log_notification(tg_message)
+            
         eligible_bridge_donors = db.query(User).filter(
             User.id.in_(bridge_donor_ids),
             User.eligibility_status == "eligible",
