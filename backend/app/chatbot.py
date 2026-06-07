@@ -195,7 +195,42 @@ def handle_registration_slot(session: ChatSession, text: str, user_phone: str, d
 # ----------------- CORE CHATBOT ENGINE -----------------
 
 def query_llm(prompt: str, system_instruction: str) -> Optional[str]:
-    """Tries to query Gemini or OpenAI based on available keys in config."""
+    """Queries AWS Bedrock (Claude 3 Haiku) as the primary engine, with fallbacks to Gemini and OpenAI."""
+    # 1. Try AWS Bedrock (Claude 3 Haiku) using boto3
+    try:
+        import boto3
+        import os
+        region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        bedrock = boto3.client(service_name='bedrock-runtime', region_name=region)
+        
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 250,
+            "temperature": 0.5,
+            "system": system_instruction,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        })
+        
+        response = bedrock.invoke_model(
+            modelId='anthropic.claude-3-haiku-20240307-v1:0',
+            contentType='application/json',
+            accept='application/json',
+            body=body
+        )
+        
+        response_body = json.loads(response.get('body').read())
+        content_list = response_body.get('content', [])
+        if content_list and len(content_list) > 0:
+            return content_list[0].get('text', '').strip()
+    except Exception as e:
+        print(f"[LLM] AWS Bedrock Claude 3 generation failed: {e}")
+
+    # 2. Fallback to Gemini
     if HAS_GEMINI and settings.GEMINI_API_KEY:
         try:
             genai.configure(api_key=settings.GEMINI_API_KEY)
@@ -208,6 +243,7 @@ def query_llm(prompt: str, system_instruction: str) -> Optional[str]:
         except Exception as e:
             print(f"[LLM] Gemini generation failed: {e}")
 
+    # 3. Fallback to OpenAI
     if HAS_OPENAI and settings.OPENAI_API_KEY:
         try:
             client = OpenAI(api_key=settings.OPENAI_API_KEY)
