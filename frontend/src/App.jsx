@@ -35,7 +35,7 @@ function haversine(lat1, lon1, lat2, lon2) {
 }
 
 const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://localhost:5000'
+  ? 'http://localhost:8000'
   : '';
 
 // Cognito integration helpers (pure JS via REST API)
@@ -448,7 +448,7 @@ export default function App() {
     loadBackendData();
   }, []);
 
-  // Perform Donor Matching using backend API
+  // Perform Donor Matching using backend API (with instant client-side fallback)
   useEffect(() => {
     if (!selectedPatientId || !patients.length) return;
     const patient = patients.find(p => p.userId === selectedPatientId);
@@ -481,14 +481,50 @@ export default function App() {
             preferredChannel: d.preferred_channel
           }));
           setMatchedDonors(mapped);
+          return;
         }
       } catch (err) {
-        console.error("Failed to fetch matches", err);
+        console.error("Failed to fetch matches from backend, falling back to local calculation:", err);
       }
+
+      // LOCAL FALLBACK CALCULATION
+      // 1. Get compatible groups
+      const allowedGroups = COMPATIBILITY[neededGroup] || [neededGroup];
+      
+      // 2. Filter and score donors locally
+      const localMatches = donors
+        .filter(d => allowedGroups.includes(d.bloodGroup))
+        .map(d => {
+          const distanceVal = haversine(patient.lat, patient.lon, d.lat, d.lon);
+          
+          // Calculate a mock AI match score
+          // Closer distance (0-30km) -> higher score
+          const distScore = Math.max(0, 100 - distanceVal * 3.3);
+          
+          // Lower calls ratio -> higher score
+          const ratioScore = Math.max(0, 100 - (d.callsRatio * 15));
+          
+          // Eligibility weight
+          const eligScore = d.eligibility.toLowerCase() === 'eligible' ? 100 : 30;
+          
+          // Composite score (scaled 0-100)
+          const score = (distScore * 0.4 + ratioScore * 0.4 + eligScore * 0.2).toFixed(1);
+          
+          return {
+            ...d,
+            distance: distanceVal.toFixed(1),
+            score: parseFloat(score)
+          };
+        })
+        // Sort by score descending
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 15);
+        
+      setMatchedDonors(localMatches);
     };
 
     fetchMatches();
-  }, [selectedPatientId, patients]);
+  }, [selectedPatientId, patients, donors]);
 
 
   // Leaflet Map Initialization & Rendering
