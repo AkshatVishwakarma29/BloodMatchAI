@@ -716,143 +716,128 @@ export default function App() {
       triggerNotification("Please enter both Name and Phone number.", "warning");
       return;
     }
-    if (!regPassword) {
-      triggerNotification("Please enter a password for Cognito account security.", "warning");
-      return;
-    }
     
-    const username = regPhone.trim();
-    triggerNotification("Creating secure Cognito user account...", "info");
+    triggerNotification("Registering user directly in local database...", "info");
     
     try {
-      await cognitoSignUp(username, regPassword, regName, regPhone, regRole);
-      triggerNotification("Cognito user created! Verification code sent via SMS/Email.", "success");
-      setVerifyUsername(username);
-      setIsVerifying(true);
-    } catch (err) {
-      console.error("Cognito registration failed, attempting direct local database registration fallback:", err);
-      triggerNotification("Cognito bypassed. Completing registration directly...", "info");
-      
-      try {
-        if (regRole === 'donor') {
-          const response = await fetch(`${API_BASE_URL}/api/donors/register`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              name: regName.trim(),
-              phone: regPhone.trim(),
-              blood_group: regBloodGroup,
-              gender: regGender,
-              preferred_channel: regChannel,
-              preferred_language: regLanguage,
-              join_bridge: regJoinBridge
-            })
-          });
+      if (regRole === 'donor') {
+        const response = await fetch(`${API_BASE_URL}/api/donors/register`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: regName.trim(),
+            phone: regPhone.trim(),
+            blood_group: regBloodGroup,
+            gender: regGender,
+            preferred_channel: regChannel,
+            preferred_language: regLanguage,
+            join_bridge: regJoinBridge
+          })
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+          triggerNotification(`Registration complete! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'}.`, 'success');
           
-          const data = await response.json();
-          if (response.ok) {
-            triggerNotification(`Registration complete! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'} (Cognito Fallback).`, 'success');
-            
-            setIsLoggedIn(true);
-            setUserRole('donor');
-            setLoginUsername(regPhone.trim());
-            setShowLoginModal(false);
-            setIsRegisterMode(false);
-            setIsVerifying(false);
-            setActiveTab('donor');
-            
-            // Clear fields
-            setRegName('');
-            setRegPhone('');
-            setRegPassword('');
-            
-            // Refresh donor list
-            const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
-            if (donorsRes.ok) {
-              const donorsData = await donorsRes.json();
-              const mappedDonors = donorsData.map(d => ({
-                userId: d.id,
-                name: d.name,
-                phone: d.phone,
-                bloodGroup: d.blood_group || 'O Positive',
-                gender: d.gender || 'Male',
-                lat: d.latitude || 17.39,
-                lon: d.longitude || 78.46,
-                donations: d.donations_till_date || 0,
-                callsRatio: d.calls_to_donations_ratio || 0.0,
-                eligibility: d.eligibility_status || 'eligible',
-                activeStatus: d.user_donation_active_status || 'Active',
-                donorType: d.role || 'Bridge Donor',
-                healthScore: d.health_score || 0.0,
-                churnRisk: d.churn_risk_score || 0.0,
-                preferredChannel: d.preferred_channel || 'WhatsApp',
-                inactiveComment: d.inactive_trigger_comment,
-                lastDonationDate: d.last_donation_date || d.lastDonation || ""
-              }));
-              setDonors(mappedDonors);
-            }
-          } else {
-            triggerNotification(data.detail || "Database registration failed.", "warning");
+          setIsLoggedIn(true);
+          setUserRole('donor');
+          setLoginUsername(regPhone.trim());
+          setShowLoginModal(false);
+          setIsRegisterMode(false);
+          setIsVerifying(false);
+          setActiveTab('donor');
+          
+          // Clear fields
+          setRegName('');
+          setRegPhone('');
+          setRegPassword('');
+          
+          // Refresh donor list
+          const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
+          if (donorsRes.ok) {
+            const donorsData = await donorsRes.json();
+            const mappedDonors = donorsData.map(d => ({
+              userId: d.id,
+              name: d.name,
+              phone: d.phone,
+              bloodGroup: d.blood_group || 'O Positive',
+              gender: d.gender || 'Male',
+              lat: d.latitude || 17.39,
+              lon: d.longitude || 78.46,
+              donations: d.donations_till_date || 0,
+              callsRatio: d.calls_to_donations_ratio || 0.0,
+              eligibility: d.eligibility_status || 'eligible',
+              activeStatus: d.user_donation_active_status || 'Active',
+              donorType: d.role || 'Bridge Donor',
+              healthScore: d.health_score || 0.0,
+              churnRisk: d.churn_risk_score || 0.0,
+              preferredChannel: d.preferred_channel || 'WhatsApp',
+              inactiveComment: d.inactive_trigger_comment,
+              lastDonationDate: d.last_donation_date || d.lastDonation || ""
+            }));
+            setDonors(mappedDonors);
           }
         } else {
-          const response = await fetch(`${API_BASE_URL}/api/patients/register`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              name: regName.trim(),
-              phone: regPhone.trim(),
-              blood_group: regBloodGroup,
-              gender: regGender,
-              preferred_channel: regChannel,
-              preferred_language: regLanguage,
-              join_bridge: regJoinBridge
-            })
-          });
-          
-          const data = await response.json();
-          if (response.ok) {
-            triggerNotification(`Registration complete! Registered as Thalassemia Patient (Cognito Fallback).`, 'success');
-            
-            setIsLoggedIn(true);
-            setUserRole('patient');
-            setLoginUsername(regPhone.trim());
-            setShowLoginModal(false);
-            setIsRegisterMode(false);
-            setIsVerifying(false);
-            setActiveTab('patient');
-            
-            // Clear fields
-            setRegName('');
-            setRegPhone('');
-            setRegPassword('');
-            
-            // Refresh patient list
-            const patientsRes = await fetch(`${API_BASE_URL}/api/patients`);
-            if (patientsRes.ok) {
-              const patientsData = await patientsRes.json();
-              const mappedPatients = patientsData.map(p => ({
-                userId: p.id,
-                name: p.name,
-                bloodGroup: p.blood_group || 'B Positive',
-                lat: p.latitude || 17.39,
-                lon: p.longitude || 78.46,
-                quantity: 2,
-                hospital: 'Hyderabad General Hospital'
-              }));
-              setPatients(mappedPatients);
-            }
-          } else {
-            triggerNotification(data.detail || "Database registration failed.", "warning");
-          }
+          triggerNotification(data.detail || "Database registration failed.", "warning");
         }
-      } catch (dbErr) {
-        console.error("Direct registration failed:", dbErr);
-        triggerNotification("Database connection error during direct registration fallback.", "warning");
+      } else {
+        const response = await fetch(`${API_BASE_URL}/api/patients/register`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: regName.trim(),
+            phone: regPhone.trim(),
+            blood_group: regBloodGroup,
+            gender: regGender,
+            preferred_channel: regChannel,
+            preferred_language: regLanguage,
+            join_bridge: regJoinBridge
+          })
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+          triggerNotification(`Registration complete! Registered as Thalassemia Patient.`, 'success');
+          
+          setIsLoggedIn(true);
+          setUserRole('patient');
+          setLoginUsername(regPhone.trim());
+          setShowLoginModal(false);
+          setIsRegisterMode(false);
+          setIsVerifying(false);
+          setActiveTab('patient');
+          
+          // Clear fields
+          setRegName('');
+          setRegPhone('');
+          setRegPassword('');
+          
+          // Refresh patient list
+          const patientsRes = await fetch(`${API_BASE_URL}/api/patients`);
+          if (patientsRes.ok) {
+            const patientsData = await patientsRes.json();
+            const mappedPatients = patientsData.map(p => ({
+              userId: p.id,
+              name: p.name,
+              bloodGroup: p.blood_group || 'B Positive',
+              lat: p.latitude || 17.39,
+              lon: p.longitude || 78.46,
+              quantity: 2,
+              hospital: 'Hyderabad General Hospital'
+            }));
+            setPatients(mappedPatients);
+          }
+        } else {
+          triggerNotification(data.detail || "Database registration failed.", "warning");
+        }
       }
+    } catch (dbErr) {
+      console.error("Direct registration failed:", dbErr);
+      triggerNotification("Database connection error during direct registration.", "warning");
     }
   };
 
@@ -1042,94 +1027,46 @@ export default function App() {
       return;
     }
     
-    // Sandbox bypasses for testing all roles
-    if (loginPassword === 'admin') {
-      setIsLoggedIn(true);
-      setUserRole('admin');
-      setShowLoginModal(false);
-      triggerNotification(`Successfully signed in as NGO Coordinator (Sandbox Admin Bypass with username: ${loginUsername}).`, "success");
-      setActiveTab('dashboard');
-      return;
-    }
-    if (loginPassword === 'donor') {
-      setIsLoggedIn(true);
-      setUserRole('donor');
-      setShowLoginModal(false);
-      triggerNotification(`Successfully signed in as Volunteer Donor (Sandbox Donor Bypass with username: ${loginUsername}).`, "success");
-      setActiveTab('donor');
-      return;
-    }
-    if (loginPassword === 'patient') {
-      setIsLoggedIn(true);
-      setUserRole('patient');
-      setShowLoginModal(false);
-      triggerNotification(`Successfully signed in as Thalassemia Patient (Sandbox Patient Bypass with username: ${loginUsername}).`, "success");
-      setActiveTab('patient');
-      return;
+    triggerNotification("Authenticating credentials...", "info");
+    
+    const cleanUsername = loginUsername.trim();
+    const typedDigits = cleanUsername.replace(/\D/g, '').slice(-10);
+    
+    let matchedDonor = null;
+    let matchedPatient = null;
+    
+    if (typedDigits.length >= 10) {
+      matchedDonor = donors.find(d => {
+        const dDigits = (d.phone || '').replace(/\D/g, '').slice(-10);
+        return dDigits === typedDigits;
+      });
+      
+      matchedPatient = patients.find(p => {
+        const pDigits = (p.phone || '').replace(/\D/g, '').slice(-10);
+        return pDigits === typedDigits;
+      });
     }
     
-    triggerNotification("Authenticating credentials with AWS Cognito...", "info");
-    try {
-      const authResult = await cognitoSignIn(loginUsername, loginPassword);
-      const idToken = authResult.AuthenticationResult.IdToken;
-      const decoded = decodeJWT(idToken);
-      
-      if (decoded) {
-        // Read the custom:role or fallback to loginRole
-        const role = decoded['custom:role'] || loginRole;
-        setIsLoggedIn(true);
-        setUserRole(role);
-        setShowLoginModal(false);
-        triggerNotification(`Successfully signed in via AWS Cognito as ${role === 'admin' ? 'NGO Coordinator' : role === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'}.`, 'success');
-        
-        if (role === 'admin') setActiveTab('dashboard');
-        else if (role === 'donor') setActiveTab('donor');
-        else if (role === 'patient') setActiveTab('patient');
-      } else {
-        throw new Error("Unable to parse ID token payload.");
-      }
-    } catch (err) {
-      console.error("Cognito login failed, falling back to local database authentication:", err);
-      
-      const cleanUsername = loginUsername.trim();
-      const typedDigits = cleanUsername.replace(/\D/g, '').slice(-10);
-      
-      let matchedDonor = null;
-      let matchedPatient = null;
-      
-      if (typedDigits.length >= 10) {
-        matchedDonor = donors.find(d => {
-          const dDigits = (d.phone || '').replace(/\D/g, '').slice(-10);
-          return dDigits === typedDigits;
-        });
-        
-        matchedPatient = patients.find(p => {
-          const pDigits = (p.phone || '').replace(/\D/g, '').slice(-10);
-          return pDigits === typedDigits;
-        });
-      }
-      
-      // Determine final role: match by phone first, else fall back to the selected form role
-      let finalRole = loginRole;
-      let displayName = cleanUsername;
-      
-      if (matchedDonor) {
-        finalRole = 'donor';
-        displayName = matchedDonor.name;
-      } else if (matchedPatient) {
-        finalRole = 'patient';
-        displayName = matchedPatient.name;
-      }
-      
-      setIsLoggedIn(true);
-      setUserRole(finalRole);
-      setShowLoginModal(false);
-      triggerNotification(`Signed in as ${finalRole === 'admin' ? 'NGO Coordinator' : finalRole === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'} (Local Fallback: ${displayName}).`, "success");
-      
-      if (finalRole === 'admin') setActiveTab('dashboard');
-      else if (finalRole === 'donor') setActiveTab('donor');
-      else if (finalRole === 'patient') setActiveTab('patient');
+    // Determine final role: match by phone first, else fall back to the selected form role
+    let finalRole = loginRole;
+    let displayName = cleanUsername;
+    
+    if (matchedDonor) {
+      finalRole = 'donor';
+      displayName = matchedDonor.name;
+    } else if (matchedPatient) {
+      finalRole = 'patient';
+      displayName = matchedPatient.name;
     }
+    
+    setIsLoggedIn(true);
+    setUserRole(finalRole);
+    setShowLoginModal(false);
+    triggerNotification(`Signed in as ${finalRole === 'admin' ? 'NGO Coordinator' : finalRole === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'} (Local Authentication: ${displayName}).`, "success");
+    
+    if (finalRole === 'admin') setActiveTab('dashboard');
+    else if (finalRole === 'donor') setActiveTab('donor');
+    else if (finalRole === 'patient') setActiveTab('patient');
   };
 
 
