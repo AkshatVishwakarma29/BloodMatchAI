@@ -195,8 +195,8 @@ def handle_registration_slot(session: ChatSession, text: str, user_phone: str, d
 # ----------------- CORE CHATBOT ENGINE -----------------
 
 def query_llm(prompt: str, system_instruction: str) -> Optional[str]:
-    """Queries AWS Bedrock (Claude 3 Haiku) as the primary engine, with fallbacks to Gemini and OpenAI."""
-    # 1. Try AWS Bedrock (Claude 3 Haiku) using boto3
+    """Queries AWS Bedrock (Claude 3.5 Sonnet/Haiku) as the primary engine, with fallbacks to Gemini and OpenAI."""
+    # 1. Try AWS Bedrock using boto3
     try:
         import boto3
         import os
@@ -216,20 +216,38 @@ def query_llm(prompt: str, system_instruction: str) -> Optional[str]:
             ]
         })
         
-        print(f"[CHATBOT] Invoking Bedrock model: us.anthropic.claude-3-5-sonnet-20241022-v2:0")
-        response = bedrock.invoke_model(
-            modelId='us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-            contentType='application/json',
-            accept='application/json',
-            body=body
-        )
+        # Candidate model IDs in order of preference
+        models = [
+            'anthropic.claude-3-5-sonnet-20241022-v2:0',
+            'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+            'anthropic.claude-3-5-sonnet-20240620-v1:0',
+            'us.anthropic.claude-3-5-sonnet-20240620-v1:0',
+            'anthropic.claude-3-5-haiku-20241022-v1:0',
+            'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+            'anthropic.claude-3-opus-20240229-v1:0',
+            'us.anthropic.claude-3-opus-20240229-v1:0'
+        ]
         
-        response_body = json.loads(response.get('body').read())
-        content_list = response_body.get('content', [])
-        if content_list and len(content_list) > 0:
-            return content_list[0].get('text', '').strip()
+        for model_id in models:
+            try:
+                print(f"[CHATBOT] Trying Bedrock model: {model_id}")
+                response = bedrock.invoke_model(
+                    modelId=model_id,
+                    contentType='application/json',
+                    accept='application/json',
+                    body=body
+                )
+                response_body = json.loads(response.get('body').read())
+                content_list = response_body.get('content', [])
+                if content_list and len(content_list) > 0:
+                    result = content_list[0].get('text', '').strip()
+                    if result:
+                        print(f"[CHATBOT] Bedrock invocation succeeded with model: {model_id}")
+                        return result
+            except Exception as e:
+                print(f"[LLM] Bedrock model {model_id} failed: {e}")
     except Exception as e:
-        print(f"[LLM] AWS Bedrock Claude 3 generation failed: {e}")
+        print(f"[LLM] AWS Bedrock client initialization failed: {e}")
 
     # 2. Fallback to Gemini
     if HAS_GEMINI and settings.GEMINI_API_KEY:
