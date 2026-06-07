@@ -1092,28 +1092,43 @@ export default function App() {
       console.error("Cognito login failed, falling back to local database authentication:", err);
       
       const cleanUsername = loginUsername.trim();
-      const matchedDonor = donors.find(d => d.phone === cleanUsername || d.userId === cleanUsername);
-      const matchedPatient = patients.find(p => p.phone === cleanUsername || p.userId === cleanUsername);
+      const typedDigits = cleanUsername.replace(/\D/g, '').slice(-10);
+      
+      let matchedDonor = null;
+      let matchedPatient = null;
+      
+      if (typedDigits.length >= 10) {
+        matchedDonor = donors.find(d => {
+          const dDigits = (d.phone || '').replace(/\D/g, '').slice(-10);
+          return dDigits === typedDigits;
+        });
+        
+        matchedPatient = patients.find(p => {
+          const pDigits = (p.phone || '').replace(/\D/g, '').slice(-10);
+          return pDigits === typedDigits;
+        });
+      }
+      
+      // Determine final role: match by phone first, else fall back to the selected form role
+      let finalRole = loginRole;
+      let displayName = cleanUsername;
       
       if (matchedDonor) {
-        setIsLoggedIn(true);
-        setUserRole('donor');
-        setShowLoginModal(false);
-        triggerNotification(`Signed in as Donor (Cognito Fallback: ${matchedDonor.name}).`, "success");
-        setActiveTab('donor');
+        finalRole = 'donor';
+        displayName = matchedDonor.name;
       } else if (matchedPatient) {
-        setIsLoggedIn(true);
-        setUserRole('patient');
-        setShowLoginModal(false);
-        triggerNotification(`Signed in as Patient (Cognito Fallback: ${matchedPatient.name}).`, "success");
-        setActiveTab('patient');
-      } else {
-        setIsLoggedIn(true);
-        setUserRole('admin');
-        setShowLoginModal(false);
-        triggerNotification(`Signed in as Admin (Cognito Fallback).`, "success");
-        setActiveTab('dashboard');
+        finalRole = 'patient';
+        displayName = matchedPatient.name;
       }
+      
+      setIsLoggedIn(true);
+      setUserRole(finalRole);
+      setShowLoginModal(false);
+      triggerNotification(`Signed in as ${finalRole === 'admin' ? 'NGO Coordinator' : finalRole === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'} (Local Fallback: ${displayName}).`, "success");
+      
+      if (finalRole === 'admin') setActiveTab('dashboard');
+      else if (finalRole === 'donor') setActiveTab('donor');
+      else if (finalRole === 'patient') setActiveTab('patient');
     }
   };
 
