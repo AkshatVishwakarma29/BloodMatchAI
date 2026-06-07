@@ -217,7 +217,7 @@ def query_llm(prompt: str, system_instruction: str) -> Optional[str]:
         })
         
         response = bedrock.invoke_model(
-            modelId='anthropic.claude-3-haiku-20240307-v1:0',
+            modelId='us.anthropic.claude-3-5-sonnet-20241022-v2:0',
             contentType='application/json',
             accept='application/json',
             body=body
