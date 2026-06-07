@@ -34,7 +34,9 @@ function haversine(lat1, lon1, lat2, lon2) {
   return c * 6371; // Earth radius in km
 }
 
-const API_BASE_URL = 'http://Bloodmatch-backend-env.eba-qgwhzseb.us-east-1.elasticbeanstalk.com';
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:5000'
+  : '';
 
 // Cognito integration helpers (pure JS via REST API)
 const COGNITO_CLIENT_ID = '2ro6j45jifdj61snoc3taao3h9';
