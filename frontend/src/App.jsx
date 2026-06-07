@@ -921,13 +921,29 @@ export default function App() {
       return;
     }
     
-    // Check if it's the admin sandbox fallback
-    if (loginUsername === 'coordinator@bloodwarriors.in' && loginPassword === 'admin') {
+    // Sandbox bypasses for testing all roles
+    if (loginPassword === 'admin') {
       setIsLoggedIn(true);
       setUserRole('admin');
       setShowLoginModal(false);
-      triggerNotification("Successfully signed in as NGO Coordinator (Sandbox Admin Bypass).", "success");
+      triggerNotification(`Successfully signed in as NGO Coordinator (Sandbox Admin Bypass with username: ${loginUsername}).`, "success");
       setActiveTab('dashboard');
+      return;
+    }
+    if (loginPassword === 'donor') {
+      setIsLoggedIn(true);
+      setUserRole('donor');
+      setShowLoginModal(false);
+      triggerNotification(`Successfully signed in as Volunteer Donor (Sandbox Donor Bypass with username: ${loginUsername}).`, "success");
+      setActiveTab('donor');
+      return;
+    }
+    if (loginPassword === 'patient') {
+      setIsLoggedIn(true);
+      setUserRole('patient');
+      setShowLoginModal(false);
+      triggerNotification(`Successfully signed in as Thalassemia Patient (Sandbox Patient Bypass with username: ${loginUsername}).`, "success");
+      setActiveTab('patient');
       return;
     }
     
