@@ -34,7 +34,110 @@ function haversine(lat1, lon1, lat2, lon2) {
   return c * 6371; // Earth radius in km
 }
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = 'http://Bloodmatch-backend-env.eba-qgwhzseb.us-east-1.elasticbeanstalk.com';
+
+// Cognito integration helpers (pure JS via REST API)
+const COGNITO_CLIENT_ID = '2ro6j45jifdj61snoc3taao3h9';
+const COGNITO_REGION = 'us-east-1';
+const COGNITO_ENDPOINT = `https://cognito-idp.${COGNITO_REGION}.amazonaws.com`;
+
+async function cognitoSignUp(username, password, name, phone, role) {
+  // Sanitize phone number (Cognito requires leading + and country code, e.g. +91XXXXXXXXXX)
+  let formattedPhone = phone.replace(/\s+/g, '');
+  if (!formattedPhone.startsWith('+')) {
+    formattedPhone = '+' + formattedPhone;
+  }
+  
+  const payload = {
+    ClientId: COGNITO_CLIENT_ID,
+    Username: username.trim(),
+    Password: password,
+    UserAttributes: [
+      { Name: 'name', Value: name.trim() },
+      { Name: 'phone_number', Value: formattedPhone },
+      { Name: 'custom:role', Value: role }
+    ]
+  };
+
+  const response = await fetch(COGNITO_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.SignUp'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || 'Cognito Sign Up failed');
+  }
+  return data;
+}
+
+async function cognitoConfirmSignUp(username, code) {
+  const payload = {
+    ClientId: COGNITO_CLIENT_ID,
+    Username: username.trim(),
+    ConfirmationCode: code.trim()
+  };
+
+  const response = await fetch(COGNITO_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.ConfirmSignUp'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || 'Cognito confirmation failed');
+  }
+  return data;
+}
+
+async function cognitoSignIn(username, password) {
+  const payload = {
+    ClientId: COGNITO_CLIENT_ID,
+    AuthFlow: 'USER_PASSWORD_AUTH',
+    AuthParameters: {
+      USERNAME: username.trim(),
+      PASSWORD: password
+    }
+  };
+
+  const response = await fetch(COGNITO_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || 'Cognito Sign In failed');
+  }
+  return data;
+}
+
+function decodeJWT(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    console.error('Failed to decode JWT', e);
+    return null;
+  }
+}
+
 
 function getBadgeShareUrl(badgeName, platform) {
   const messages = {
@@ -154,6 +257,10 @@ export default function App() {
   const [regChannel, setRegChannel] = useState('WhatsApp');
   const [regLanguage, setRegLanguage] = useState('English');
   const [regJoinBridge, setRegJoinBridge] = useState(true);
+  const [regPassword, setRegPassword] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyUsername, setVerifyUsername] = useState('');
 
   // Fetch real backend notification console logs periodically
   useEffect(() => {
@@ -600,18 +707,45 @@ export default function App() {
     }
   };
 
-  // Handle Donor & Patient Registration in Frontend
+  // Handle Donor & Patient Registration in Frontend with AWS Cognito
   const handleDonorRegistration = async (e) => {
     e.preventDefault();
     if (!regName.trim() || !regPhone.trim()) {
       triggerNotification("Please enter both Name and Phone number.", "warning");
       return;
     }
+    if (!regPassword) {
+      triggerNotification("Please enter a password for Cognito account security.", "warning");
+      return;
+    }
     
-    if (regRole === 'donor') {
-      triggerNotification("Submitting registration to backend...", "info");
+    const username = regPhone.trim();
+    triggerNotification("Creating secure Cognito user account...", "info");
+    
+    try {
+      await cognitoSignUp(username, regPassword, regName, regPhone, regRole);
+      triggerNotification("Cognito user created! Verification code sent via SMS/Email.", "success");
+      setVerifyUsername(username);
+      setIsVerifying(true);
+    } catch (err) {
+      console.error(err);
+      triggerNotification(`Cognito registration failed: ${err.message}`, "warning");
+    }
+  };
+
+  const handleConfirmVerification = async (e) => {
+    e.preventDefault();
+    if (!verificationCode.trim()) {
+      triggerNotification("Please enter the verification code.", "warning");
+      return;
+    }
+    
+    triggerNotification("Verifying confirmation code...", "info");
+    try {
+      await cognitoConfirmSignUp(verifyUsername, verificationCode);
+      triggerNotification("Account verified successfully! Completing database registration...", "success");
       
-      try {
+      if (regRole === 'donor') {
         const response = await fetch(`${API_BASE_URL}/api/donors/register`, {
           method: 'POST',
           headers: {
@@ -630,19 +764,21 @@ export default function App() {
         
         const data = await response.json();
         if (response.ok) {
-          triggerNotification(`Registration successful! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'}.`, 'success');
+          triggerNotification(`Registration complete! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'}.`, 'success');
           
-          // Auto sign in as the registered donor
           setIsLoggedIn(true);
           setUserRole('donor');
           setLoginUsername(regPhone.trim());
           setShowLoginModal(false);
-          setIsRegisterMode(false); // Reset to sign-in view
+          setIsRegisterMode(false);
+          setIsVerifying(false);
           setActiveTab('donor');
           
           // Clear fields
           setRegName('');
           setRegPhone('');
+          setRegPassword('');
+          setVerificationCode('');
           
           // Refresh donor list and stats from backend
           const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
@@ -692,16 +828,9 @@ export default function App() {
             });
           }
         } else {
-          triggerNotification(data.detail || "Registration failed. Please try again.", "warning");
+          triggerNotification(data.detail || "Database registration failed. Please try again.", "warning");
         }
-      } catch (err) {
-        console.error(err);
-        triggerNotification("Connection to backend registration failed.", "warning");
-      }
-    } else {
-      triggerNotification("Submitting patient registration to backend...", "info");
-      
-      try {
+      } else {
         const response = await fetch(`${API_BASE_URL}/api/patients/register`, {
           method: 'POST',
           headers: {
@@ -720,19 +849,21 @@ export default function App() {
         
         const data = await response.json();
         if (response.ok) {
-          triggerNotification(`Registration successful! Registered as Thalassemia Patient.`, 'success');
+          triggerNotification(`Registration complete! Registered as Thalassemia Patient.`, 'success');
           
-          // Auto sign in as the registered patient
           setIsLoggedIn(true);
           setUserRole('patient');
           setLoginUsername(regPhone.trim());
           setShowLoginModal(false);
           setIsRegisterMode(false);
+          setIsVerifying(false);
           setActiveTab('patient');
           
           // Clear fields
           setRegName('');
           setRegPhone('');
+          setRegPassword('');
+          setVerificationCode('');
           
           // Refresh patient list and stats from backend
           const patientsRes = await fetch(`${API_BASE_URL}/api/patients`);
@@ -772,14 +903,58 @@ export default function App() {
             });
           }
         } else {
-          triggerNotification(data.detail || "Registration failed. Please try again.", "warning");
+          triggerNotification(data.detail || "Database registration failed. Please try again.", "warning");
         }
-      } catch (err) {
-        console.error(err);
-        triggerNotification("Connection to backend patient registration failed.", "warning");
       }
+    } catch (err) {
+      console.error(err);
+      triggerNotification(`Verification failed: ${err.message}`, "warning");
     }
   };
+
+  const handleCognitoSignIn = async (e) => {
+    if (e) e.preventDefault();
+    if (!loginUsername.trim() || !loginPassword) {
+      triggerNotification("Please enter both username/contact and password.", "warning");
+      return;
+    }
+    
+    // Check if it's the admin sandbox fallback
+    if (loginUsername === 'coordinator@bloodwarriors.in' && loginPassword === 'admin') {
+      setIsLoggedIn(true);
+      setUserRole('admin');
+      setShowLoginModal(false);
+      triggerNotification("Successfully signed in as NGO Coordinator (Sandbox Admin Bypass).", "success");
+      setActiveTab('dashboard');
+      return;
+    }
+    
+    triggerNotification("Authenticating credentials with AWS Cognito...", "info");
+    try {
+      const authResult = await cognitoSignIn(loginUsername, loginPassword);
+      const idToken = authResult.AuthenticationResult.IdToken;
+      const decoded = decodeJWT(idToken);
+      
+      if (decoded) {
+        // Read the custom:role or fallback to loginRole
+        const role = decoded['custom:role'] || loginRole;
+        setIsLoggedIn(true);
+        setUserRole(role);
+        setShowLoginModal(false);
+        triggerNotification(`Successfully signed in via AWS Cognito as ${role === 'admin' ? 'NGO Coordinator' : role === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'}.`, 'success');
+        
+        if (role === 'admin') setActiveTab('dashboard');
+        else if (role === 'donor') setActiveTab('donor');
+        else if (role === 'patient') setActiveTab('patient');
+      } else {
+        throw new Error("Unable to parse ID token payload.");
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification(`Cognito Sign-In failed: ${err.message}`, "warning");
+    }
+  };
+
 
   const handleRaiseEmergencyRequest = (e) => {
     e.preventDefault();
@@ -3080,17 +3255,9 @@ export default function App() {
 
                 <button 
                   className="btn-login"
-                  onClick={() => {
-                    setIsLoggedIn(true);
-                    setUserRole(loginRole);
-                    setShowLoginModal(false);
-                    triggerNotification(`Successfully signed in as ${loginRole === 'admin' ? 'NGO Coordinator' : loginRole === 'donor' ? 'Volunteer Donor' : 'Thalassemia Patient'}.`, 'success');
-                    if (loginRole === 'admin') setActiveTab('dashboard');
-                    else if (loginRole === 'donor') setActiveTab('donor');
-                    else if (loginRole === 'patient') setActiveTab('patient');
-                  }}
+                  onClick={handleCognitoSignIn}
                 >
-                  Sign In (Cognito Sandbox)
+                  Sign In (Cognito Live Auth)
                 </button>
                 <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '12px' }}>
                   <a href="#" style={{ color: 'var(--primary)', fontWeight: 600 }} onClick={(e) => { e.preventDefault(); setIsRegisterMode(true); }}>
@@ -3098,6 +3265,33 @@ export default function App() {
                   </a>
                 </div>
               </>
+            ) : isVerifying ? (
+              <form onSubmit={handleConfirmVerification}>
+                <div className="auth-title" style={{ marginTop: '0' }}>Verify Account</div>
+                <div className="auth-sub">Enter the confirmation code sent to your contact:</div>
+
+                <div className="auth-input-group">
+                  <label className="auth-input-label">Verification Code</label>
+                  <input 
+                    type="text" 
+                    className="auth-input" 
+                    placeholder="e.g. 123456" 
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <button type="submit" className="btn-login" style={{ marginTop: '1.25rem' }}>
+                  Confirm Verification Code
+                </button>
+
+                <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '12px' }}>
+                  <a href="#" style={{ color: 'var(--primary)', fontWeight: 600 }} onClick={(e) => { e.preventDefault(); setIsVerifying(false); }}>
+                    Back to Registration
+                  </a>
+                </div>
+              </form>
             ) : (
               <form onSubmit={handleDonorRegistration}>
                 <div className="auth-title" style={{ marginTop: '0' }}>Register to BloodMatch</div>
@@ -3144,6 +3338,18 @@ export default function App() {
                     placeholder="e.g. +91 9876543210" 
                     value={regPhone}
                     onChange={(e) => setRegPhone(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="auth-input-group">
+                  <label className="auth-input-label">Password</label>
+                  <input 
+                    type="password" 
+                    className="auth-input" 
+                    placeholder="Set secure password" 
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
                     required
                   />
                 </div>

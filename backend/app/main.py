@@ -8,9 +8,6 @@ from .database import get_db, engine, Base
 from .models import User, Bridge, Request, OutreachEvent
 from . import schemas, crud, matching, outreach, chatbot
 
-# Make sure tables are created
-Base.metadata.create_all(bind=engine)
-
 app = FastAPI(
     title="ThalassemiaFree AI — BloodBridge 2.0 API",
     description="Intelligent Event-Driven Matching and Outreach Platform Backend",
@@ -25,6 +22,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+def on_startup():
+    print("Running startup database setup...")
+    try:
+        # Create tables
+        Base.metadata.create_all(bind=engine)
+        
+        # Check if seeding is needed
+        db_session = next(get_db())
+        try:
+            user_count = db_session.query(User).count()
+            if user_count == 0:
+                print("Database is empty. Running auto-seeding...")
+                from .seeder import seed_database
+                csv_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Dataset.csv")
+                if os.path.exists(csv_file):
+                    seed_database(csv_file)
+                    print("Auto-seeding completed successfully!")
+                else:
+                    print(f"Dataset.csv not found at {csv_file}. Skipping auto-seeding.")
+        except Exception as e:
+            print(f"Failed to query database during startup seeding check: {e}")
+        finally:
+            db_session.close()
+    except Exception as e:
+        print(f"Failed to initialize database on startup: {e}")
+
 
 # ----------------- DONORS & PATIENTS -----------------
 

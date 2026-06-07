@@ -9,8 +9,15 @@ from .matching import rank_donors
 from .database import SessionLocal
 
 # Local file log for simulating outgoing notifications
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+try:
+    os.makedirs(LOG_DIR, exist_ok=True)
+except (PermissionError, OSError):
+    # Fallback to writable temp directory if the application path is read-only (e.g. AWS Elastic Beanstalk)
+    import tempfile
+    LOG_DIR = os.path.join(tempfile.gettempdir(), "bloodmatch_logs")
+    os.makedirs(LOG_DIR, exist_ok=True)
+
 NOTIFICATION_LOG_PATH = os.path.join(LOG_DIR, "notifications.log")
 
 # Time delay between waves in seconds for DEMO purposes (instead of 4 hours)
