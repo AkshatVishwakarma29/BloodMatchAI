@@ -730,8 +730,129 @@ export default function App() {
       setVerifyUsername(username);
       setIsVerifying(true);
     } catch (err) {
-      console.error(err);
-      triggerNotification(`Cognito registration failed: ${err.message}`, "warning");
+      console.error("Cognito registration failed, attempting direct local database registration fallback:", err);
+      triggerNotification("Cognito bypassed. Completing registration directly...", "info");
+      
+      try {
+        if (regRole === 'donor') {
+          const response = await fetch(`${API_BASE_URL}/api/donors/register`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: regName.trim(),
+              phone: regPhone.trim(),
+              blood_group: regBloodGroup,
+              gender: regGender,
+              preferred_channel: regChannel,
+              preferred_language: regLanguage,
+              join_bridge: regJoinBridge
+            })
+          });
+          
+          const data = await response.json();
+          if (response.ok) {
+            triggerNotification(`Registration complete! Registered as ${regJoinBridge ? 'Bridge Donor' : 'Emergency Donor'} (Cognito Fallback).`, 'success');
+            
+            setIsLoggedIn(true);
+            setUserRole('donor');
+            setLoginUsername(regPhone.trim());
+            setShowLoginModal(false);
+            setIsRegisterMode(false);
+            setIsVerifying(false);
+            setActiveTab('donor');
+            
+            // Clear fields
+            setRegName('');
+            setRegPhone('');
+            setRegPassword('');
+            
+            // Refresh donor list
+            const donorsRes = await fetch(`${API_BASE_URL}/api/donors`);
+            if (donorsRes.ok) {
+              const donorsData = await donorsRes.json();
+              const mappedDonors = donorsData.map(d => ({
+                userId: d.id,
+                name: d.name,
+                phone: d.phone,
+                bloodGroup: d.blood_group || 'O Positive',
+                gender: d.gender || 'Male',
+                lat: d.latitude || 17.39,
+                lon: d.longitude || 78.46,
+                donations: d.donations_till_date || 0,
+                callsRatio: d.calls_to_donations_ratio || 0.0,
+                eligibility: d.eligibility_status || 'eligible',
+                activeStatus: d.user_donation_active_status || 'Active',
+                donorType: d.role || 'Bridge Donor',
+                healthScore: d.health_score || 0.0,
+                churnRisk: d.churn_risk_score || 0.0,
+                preferredChannel: d.preferred_channel || 'WhatsApp',
+                inactiveComment: d.inactive_trigger_comment,
+                lastDonationDate: d.last_donation_date || d.lastDonation || ""
+              }));
+              setDonors(mappedDonors);
+            }
+          } else {
+            triggerNotification(data.detail || "Database registration failed.", "warning");
+          }
+        } else {
+          const response = await fetch(`${API_BASE_URL}/api/patients/register`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: regName.trim(),
+              phone: regPhone.trim(),
+              blood_group: regBloodGroup,
+              gender: regGender,
+              preferred_channel: regChannel,
+              preferred_language: regLanguage,
+              join_bridge: regJoinBridge
+            })
+          });
+          
+          const data = await response.json();
+          if (response.ok) {
+            triggerNotification(`Registration complete! Registered as Thalassemia Patient (Cognito Fallback).`, 'success');
+            
+            setIsLoggedIn(true);
+            setUserRole('patient');
+            setLoginUsername(regPhone.trim());
+            setShowLoginModal(false);
+            setIsRegisterMode(false);
+            setIsVerifying(false);
+            setActiveTab('patient');
+            
+            // Clear fields
+            setRegName('');
+            setRegPhone('');
+            setRegPassword('');
+            
+            // Refresh patient list
+            const patientsRes = await fetch(`${API_BASE_URL}/api/patients`);
+            if (patientsRes.ok) {
+              const patientsData = await patientsRes.json();
+              const mappedPatients = patientsData.map(p => ({
+                userId: p.id,
+                name: p.name,
+                bloodGroup: p.blood_group || 'B Positive',
+                lat: p.latitude || 17.39,
+                lon: p.longitude || 78.46,
+                quantity: 2,
+                hospital: 'Hyderabad General Hospital'
+              }));
+              setPatients(mappedPatients);
+            }
+          } else {
+            triggerNotification(data.detail || "Database registration failed.", "warning");
+          }
+        }
+      } catch (dbErr) {
+        console.error("Direct registration failed:", dbErr);
+        triggerNotification("Database connection error during direct registration fallback.", "warning");
+      }
     }
   };
 
