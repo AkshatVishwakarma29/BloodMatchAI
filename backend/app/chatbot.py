@@ -216,6 +216,7 @@ def query_llm(prompt: str, system_instruction: str) -> Optional[str]:
             ]
         })
         
+        print(f"[CHATBOT] Invoking Bedrock model: us.anthropic.claude-3-5-sonnet-20241022-v2:0")
         response = bedrock.invoke_model(
             modelId='us.anthropic.claude-3-5-sonnet-20241022-v2:0',
             contentType='application/json',
